@@ -2,6 +2,7 @@ import feedparser
 import smtplib
 import os
 import json
+import re  # Added for HTML stripping
 from google import genai
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -47,6 +48,27 @@ SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
 
+def clean_html(raw_html):
+    """
+    Removes HTML tags (like <div>, <p>, <br>) from text.
+    Also removes common RSS footer noise like 'The post ... appeared first on ...'
+    """
+    if not raw_html:
+        return ""
+
+    # 1. Regex to remove HTML tags
+    cleaner = re.compile("<.*?>")
+    text = re.sub(cleaner, "", raw_html)
+
+    # 2. Decode HTML entities (optional, but good for &amp; etc)
+    # text = html.unescape(text) # Requires 'import html', skipping for simplicity
+
+    # 3. Remove extra whitespace
+    text = " ".join(text.split())
+
+    return text
+
+
 def get_articles(feeds):
     """Fetches all articles from feeds."""
     raw_items = []
@@ -57,17 +79,23 @@ def get_articles(feeds):
             feed = feedparser.parse(url)
             for entry in feed.entries:
                 title = entry.title if hasattr(entry, "title") else ""
-                summary = entry.summary if hasattr(entry, "summary") else ""
+
+                # Get raw summary
+                raw_summary = entry.summary if hasattr(entry, "summary") else ""
                 link = entry.link if hasattr(entry, "link") else "#"
-                # Basic cleaning
-                text_content = f"{title} - {summary[:300]}"
+
+                # CLEAN IT -> Strip HTML tags before using it
+                clean_summary = clean_html(raw_summary)
+
+                # Basic cleaning for AI context
+                text_content = f"{title} - {clean_summary[:300]}"
 
                 raw_items.append(
                     {
                         "source": source,
                         "title": title,
                         "link": link,
-                        "summary": summary[:200] + "...",
+                        "summary": clean_summary[:200] + "...",  # Truncate clean text
                         "full_text": text_content,
                     }
                 )
@@ -178,7 +206,7 @@ def send_email(articles, method="Mechanical"):
         <div style="max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px;">
             <div style="background-color: {'#4b2c92' if method == 'AI' else '#0078D4'}; padding: 20px; text-align: center; color: white;">
                 <h2 style="margin:0;">🚀 Daily Brief ({method})</h2>
-                <p style="margin:5px 0 0; opacity: 0.9;">Top {len(articles)} Stories for IT</p>
+                <p style="margin:5px 0 0; opacity: 0.9;">Top {len(articles)} Personalized Stories</p>
             </div>
             <div style="padding: 20px;">
     """
