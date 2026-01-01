@@ -156,7 +156,7 @@ def analyze_with_gemini(articles):
         print(f"⚠️ Gemini Error: {e}")
         try:
             # Attempt to list models to help debug
-            if 'client' in locals():
+            if "client" in locals():
                 print("Available models:")
                 for m in client.models.list():
                     print(f" - {m.name}")
@@ -178,7 +178,7 @@ def send_email(articles, method="Mechanical"):
         <div style="max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px;">
             <div style="background-color: {'#4b2c92' if method == 'AI' else '#0078D4'}; padding: 20px; text-align: center; color: white;">
                 <h2 style="margin:0;">🚀 Daily Brief ({method})</h2>
-                <p style="margin:5px 0 0; opacity: 0.9;">Top {len(articles)} Stories for Epic IT</p>
+                <p style="margin:5px 0 0; opacity: 0.9;">Top {len(articles)} Stories for IT</p>
             </div>
             <div style="padding: 20px;">
     """
