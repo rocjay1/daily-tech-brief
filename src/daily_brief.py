@@ -135,7 +135,7 @@ def analyze_with_gemini(articles):
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-1.5-flash-002",
             contents=prompt,
             config={"response_mime_type": "application/json"},
         )
@@ -154,6 +154,15 @@ def analyze_with_gemini(articles):
 
     except Exception as e:
         print(f"⚠️ Gemini Error: {e}")
+        try:
+            # Attempt to list models to help debug
+            if 'client' in locals():
+                print("Available models:")
+                for m in client.models.list():
+                    print(f" - {m.name}")
+        except Exception as list_e:
+            print(f"Could not list models: {list_e}")
+
         print("Falling back to mechanical scoring...")
         return score_mechanically(articles)
 
