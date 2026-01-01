@@ -36,6 +36,7 @@ jobs:
         with:
           secrets: |-
             email_pass:projects/${{secrets.GCP_PROJECT_ID}}/secrets/gmail-app-password
+            gemini_key:projects/${{secrets.GCP_PROJECT_ID}}/secrets/gemini-api-key
 
       # 3. Setup Python
       - name: Set up Python
