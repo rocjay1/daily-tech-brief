@@ -2,7 +2,7 @@ import feedparser
 import smtplib
 import os
 import json
-import google.generativeai as genai
+from google import genai
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
@@ -117,7 +117,7 @@ def analyze_with_gemini(articles):
     )
 
     prompt = f"""
-    You are an intelligent assistant for a Cloud System Engineer at Epic Systems. 
+    You are an intelligent assistant for a Cloud System Engineer working at a tech company. 
     Role: Focus on Azure, Terraform, Python, Linux Kernel, and AI Engineering (LLMs).
     
     Task: Review these RSS headlines and pick the Top 10 most relevant items.
@@ -133,10 +133,11 @@ def analyze_with_gemini(articles):
     """
 
     try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(
-            prompt, generation_config={"response_mime_type": "application/json"}
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt,
+            config={"response_mime_type": "application/json"},
         )
 
         selections = json.loads(response.text)

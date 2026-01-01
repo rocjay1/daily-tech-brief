@@ -54,5 +54,6 @@ jobs:
           EMAIL_USER: ${{ secrets.EMAIL_USER }} # Your actual Gmail address
           EMAIL_PASS: ${{ steps.secrets.outputs.email_pass }} # Injected securely from Step 2
           EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+          GEMINI_KEY: ${{ steps.secrets.outputs.gemini_key }}
         run: python src/daily_brief.py
         
