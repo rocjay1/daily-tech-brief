@@ -10,12 +10,23 @@ from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
 
+# Expanded List of High-Signal Feeds
 FEEDS = {
-    "GitHub Engineering": "https://github.blog/category/engineering/feed/",
-    "LWN (Linux Kernel)": "https://lwn.net/headlines/rss",
+    # Cloud & Infrastructure (Azure/Terraform)
     "Azure Blog": "https://azure.microsoft.com/en-us/blog/feed/",
     "Azure Tools (Terraform)": "https://techcommunity.microsoft.com/gscwv57232/rss/board?board.id=AzureToolsBlog",
+    "Spacelift (IaC Deep Dives)": "https://spacelift.io/blog/feed",
+    "Firefly (Cloud Governance)": "https://www.firefly.ai/blog/rss.xml",  # Verify if they have a direct RSS, often generic blogs need specific scraping or standard /feed
+    # AI Engineering & LLMs
     "Latent Space (AI Engineering)": "https://www.latent.space/feed",
+    "The Batch (DeepLearning.AI)": "https://www.deeplearning.ai/the-batch/feed/",
+    "TLDR AI": "https://tldr.tech/ai/rss",
+    # Linux & Systems
+    "LWN (Linux Kernel)": "https://lwn.net/headlines/rss",
+    "Phoronix (Linux Hardware)": "https://www.phoronix.com/rss.php",
+    "Julia Evans (Wizard Zines)": "https://jvns.ca/atom.xml",
+    # DevOps & GitHub
+    "GitHub Engineering": "https://github.blog/category/engineering/feed/",
     "Microsoft DevOps": "https://devblogs.microsoft.com/devops/feed/",
 }
 
@@ -38,6 +49,9 @@ WEIGHTS = {
     "Python": 1,
 }
 
+# Settings
+TOP_N_ARTICLES = 15  # Increased from 10 to 15
+
 # Env Vars
 EMAIL_SENDER = os.environ.get("EMAIL_USER")
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASS")
@@ -49,23 +63,12 @@ SMTP_PORT = 587
 
 
 def clean_html(raw_html):
-    """
-    Removes HTML tags (like <div>, <p>, <br>) from text.
-    Also removes common RSS footer noise like 'The post ... appeared first on ...'
-    """
+    """Removes HTML tags and cleans whitespace."""
     if not raw_html:
         return ""
-
-    # 1. Regex to remove HTML tags
     cleaner = re.compile("<.*?>")
     text = re.sub(cleaner, "", raw_html)
-
-    # 2. Decode HTML entities (optional, but good for &amp; etc)
-    # text = html.unescape(text) # Requires 'import html', skipping for simplicity
-
-    # 3. Remove extra whitespace
     text = " ".join(text.split())
-
     return text
 
 
@@ -76,18 +79,15 @@ def get_articles(feeds):
 
     for source, url in feeds.items():
         try:
-            feed = feedparser.parse(url)
+            # Add a user-agent to prevent 403s from some strict blogs
+            feed = feedparser.parse(url, agent="DailyTechBriefBot/1.0")
+
             for entry in feed.entries:
                 title = entry.title if hasattr(entry, "title") else ""
-
-                # Get raw summary
                 raw_summary = entry.summary if hasattr(entry, "summary") else ""
                 link = entry.link if hasattr(entry, "link") else "#"
 
-                # CLEAN IT -> Strip HTML tags before using it
                 clean_summary = clean_html(raw_summary)
-
-                # Basic cleaning for AI context
                 text_content = f"{title} - {clean_summary[:300]}"
 
                 raw_items.append(
@@ -95,7 +95,7 @@ def get_articles(feeds):
                         "source": source,
                         "title": title,
                         "link": link,
-                        "summary": clean_summary[:200] + "...",  # Truncate clean text
+                        "summary": clean_summary[:250] + "...",
                         "full_text": text_content,
                     }
                 )
@@ -107,7 +107,7 @@ def get_articles(feeds):
 
 def score_mechanically(articles):
     """Fallback: Scored by keywords."""
-    print("🤖 No API Key found (or error). Using Mechanical Scoring.")
+    print("🤖 No API Key found. Using Mechanical Scoring.")
     scored = []
     for item in articles:
         score = 0
@@ -126,17 +126,16 @@ def score_mechanically(articles):
             scored.append(item)
 
     scored.sort(key=lambda x: x["score"], reverse=True)
-    return scored[:15]
+    return scored[:TOP_N_ARTICLES]
 
 
 def analyze_with_gemini(articles):
     """AI: Uses Gemini to curate the list."""
     print("✨ API Key found. Asking Gemini to curate the list...")
 
-    # 1. Pre-filter slightly to avoid sending 100+ items (Token optimization)
-    candidates = articles[:60]
+    # Pre-filter: Take top 80 most recent/relevant to save tokens
+    candidates = articles[:80]
 
-    # 2. Prepare Prompt
     items_str = json.dumps(
         [
             {"id": i, "source": a["source"], "text": a["full_text"]}
@@ -146,18 +145,19 @@ def analyze_with_gemini(articles):
 
     prompt = f"""
     You are an intelligent assistant for a Cloud System Engineer working at a tech company. 
-    Role: Focus on Azure, Terraform, Python, Linux Kernel, and AI Engineering (LLMs).
+    Role: Focus on Azure, Terraform, Python, Linux Kernel, CI/CD, and AI Engineering (LLMs).
     
-    Task: Review these RSS headlines and pick the Top 10 most relevant items.
+    Task: Review these RSS headlines and pick the Top {TOP_N_ARTICLES} most relevant items.
     
     Criteria:
-    - High Priority: Major Terraform/Azure updates, Practical AI Engineering, Security vulnerabilities, Linux deep-dives.
-    - Ignore: Generic marketing, beginner tutorials, or non-technical news.
+    - High Priority: Deep technical dives (Phoronix/LWN), Terraform/OpenTofu updates, Practical AI Engineering.
+    - Educational: Good educational content explaining complex topics (like Kernel internals, AI architecture, or Network protocols) is highly valued.
+    - Ignore: Fluff, pure marketing, or extremely basic "Hello World" tutorials.
     
     Input Data:
     {items_str}
     
-    Output Format: JSON only. A list of objects with fields: "id" (int) and "analysis" (string - a 1 sentence explanation of why this matters to my specific job).
+    Output Format: JSON only. A list of objects with fields: "id" (int) and "analysis" (string - a 1 sentence explanation of why this matters).
     """
 
     try:
@@ -169,29 +169,17 @@ def analyze_with_gemini(articles):
         )
 
         selections = json.loads(response.text)
-
         final_list = []
         for sel in selections:
             if sel["id"] < len(candidates):
                 original = candidates[sel["id"]]
                 original["reason"] = sel["analysis"]
-                original["tags"] = ["AI Selected"]
                 final_list.append(original)
 
         return final_list
 
     except Exception as e:
         print(f"⚠️ Gemini Error: {e}")
-        try:
-            # Attempt to list models to help debug
-            if "client" in locals():
-                print("Available models:")
-                for m in client.models.list():
-                    print(f" - {m.name}")
-        except Exception as list_e:
-            print(f"Could not list models: {list_e}")
-
-        print("Falling back to mechanical scoring...")
         return score_mechanically(articles)
 
 
@@ -252,7 +240,6 @@ if __name__ == "__main__":
         print("❌ Error: EMAIL_USER not set.")
     else:
         all_articles = get_articles(FEEDS)
-
         if GEMINI_API_KEY:
             final_list = analyze_with_gemini(all_articles)
             send_email(final_list, method="AI")
