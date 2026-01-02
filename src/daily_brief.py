@@ -1,24 +1,31 @@
-import feedparser
-import smtplib
-import os
-import json
-import re
+"""
+Daily Tech Brief Generator
+This script fetches RSS feeds, deduplicates articles using Firestore,
+curates them using Google Gemini, and sends an email summary.
+"""
+
+import datetime
 import hashlib
+import json
+import os
+import re
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+import feedparser
 from google import genai
 from google.cloud import firestore
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from datetime import datetime
 
-# --- CONFIGURATION ---
 
-# Expanded List of High-Signal Feeds
 FEEDS = {
     # Cloud & Infrastructure (Azure/Terraform)
     "Azure Blog": "https://azure.microsoft.com/en-us/blog/feed/",
-    "Azure Tools (Terraform)": "https://techcommunity.microsoft.com/gscwv57232/rss/board?board.id=AzureToolsBlog",
+    "Azure Tools (Terraform)": (
+        "https://techcommunity.microsoft.com/gscwv57232/rss/board?board.id=AzureToolsBlog"
+    ),
     "Spacelift (IaC Deep Dives)": "https://spacelift.io/blog/feed",
-    "Firefly (Cloud Governance)": "https://www.firefly.ai/blog/rss.xml",  # Verify if they have a direct RSS, often generic blogs need specific scraping or standard /feed
+    "Firefly (Cloud Governance)": "https://www.firefly.ai/blog/rss.xml",
     # AI Engineering & LLMs
     "Latent Space (AI Engineering)": "https://www.latent.space/feed",
     "The Batch (DeepLearning.AI)": "https://www.deeplearning.ai/the-batch/feed/",
@@ -77,7 +84,7 @@ class StateManager:
             self.db = firestore.Client(project=project_id)
             self.collection = self.db.collection("seen_articles")
             print("✅ Connected to Firestore for deduplication.")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             print(f"⚠️ Firestore connection failed: {e}")
             self.db = None
 
@@ -135,7 +142,7 @@ class StateManager:
                 {
                     "title": article["title"],
                     "url": article["link"],
-                    "processed_at": datetime.now(),
+                    "processed_at": datetime.datetime.now(),
                 },
             )
             count += 1
@@ -152,6 +159,7 @@ class StateManager:
 
 
 def clean_html(raw_html):
+    """Removes HTML tags from a string."""
     if not raw_html:
         return ""
     cleaner = re.compile("<.*?>")
@@ -160,8 +168,9 @@ def clean_html(raw_html):
 
 
 def get_articles(feeds):
+    """Fetches and parses RSS feeds."""
     raw_items = []
-    print(f"--- Starting Scan for {datetime.now().strftime('%Y-%m-%d')} ---")
+    print(f"--- Starting Scan for {datetime.datetime.now().strftime('%Y-%m-%d')} ---")
 
     for source, url in feeds.items():
         try:
@@ -183,13 +192,14 @@ def get_articles(feeds):
                         "full_text": text_content,
                     }
                 )
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             print(f"Error parsing {source}: {e}")
             continue
     return raw_items
 
 
 def score_mechanically(articles):
+    """Scores articles based on keywords if AI is unavailable."""
     print("🤖 No API Key found. Using Mechanical Scoring.")
     scored = []
     for item in articles:
@@ -210,6 +220,7 @@ def score_mechanically(articles):
 
 
 def analyze_with_gemini(articles):
+    """Uses Google Gemini to select the best articles."""
     print("✨ API Key found. Asking Gemini to curate the list...")
     # Pre-filter top 80 to save tokens
     candidates = articles[:80]
@@ -222,19 +233,19 @@ def analyze_with_gemini(articles):
     )
 
     prompt = f"""
-    You are an intelligent assistant for a Cloud System Engineer working at a tech company. 
+    You are an intelligent assistant for a Cloud System Engineer working at a large tech company.
     Role: Focus on Azure, Terraform, Python, Linux Kernel, CI/CD, and AI Engineering (LLMs).
-    
+
     Task: Review these RSS headlines and pick the Top {TOP_N_ARTICLES} most relevant items.
-    
+
     Criteria:
     - High Priority: Deep technical dives (Phoronix/LWN), Terraform/OpenTofu updates, Practical AI Engineering.
     - Educational: Good educational content explaining complex topics (like Kernel internals, AI architecture, or Network protocols) is highly valued.
     - Ignore: Fluff, pure marketing, or extremely basic "Hello World" tutorials.
-    
+
     Input Data:
     {items_str}
-    
+
     Output Format: JSON only. A list of objects with fields: "id" (int) and "analysis" (string - a 1 sentence explanation of why this matters).
     """
 
@@ -253,12 +264,13 @@ def analyze_with_gemini(articles):
                 original["reason"] = sel["analysis"]
                 final_list.append(original)
         return final_list
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"⚠️ Gemini Error: {e}")
         return score_mechanically(articles)
 
 
 def send_email(articles, method="Mechanical"):
+    """Formats and sends the daily brief via email."""
     if not articles:
         print("No articles to send.")
         return
@@ -267,7 +279,8 @@ def send_email(articles, method="Mechanical"):
     <html>
     <body style="font-family: 'Segoe UI', sans-serif; color: #333; line-height: 1.6;">
         <div style="max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px;">
-            <div style="background-color: {'#4b2c92' if method == 'AI' else '#0078D4'}; padding: 20px; text-align: center; color: white;">
+            <div style="background-color: {'#4b2c92' if method == 'AI' else '#0078D4'};
+                        padding: 20px; text-align: center; color: white;">
                 <h2 style="margin:0;">🚀 Daily Brief ({method})</h2>
                 <p style="margin:5px 0 0; opacity: 0.9;">Top {len(articles)} Stories</p>
             </div>
@@ -281,9 +294,11 @@ def send_email(articles, method="Mechanical"):
         )
         html_content += f"""
         <div style="margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
-            <span style="font-size: 11px; font-weight: bold; color: #666; text-transform: uppercase;">{item['source']}</span>
+            <span style="font-size: 11px; font-weight: bold; color: #666;
+                         text-transform: uppercase;">{item['source']}</span>
             <h3 style="margin: 5px 0; font-size: 18px;">
-                <a href="{item['link']}" style="text-decoration: none; color: #0078D4;">{item['title']}</a>
+                <a href="{item['link']}"
+                   style="text-decoration: none; color: #0078D4;">{item['title']}</a>
             </h3>
             <p style="font-size: 14px; color: #444; margin-top: 5px;">{description}</p>
         </div>
@@ -302,28 +317,23 @@ def send_email(articles, method="Mechanical"):
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
         server.send_message(msg)
         server.quit()
-        print(f"✅ Email sent.")
-    except Exception as e:
+        print("✅ Email sent.")
+    except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"❌ Email failed: {e}")
 
 
-if __name__ == "__main__":
+def main():
+    """Main execution entry point."""
     if not EMAIL_SENDER:
         print("❌ Error: EMAIL_USER not set.")
     else:
-        # 1. Init DB
         state_manager = StateManager(GCP_PROJECT_ID)
-
-        # 2. Fetch
         all_articles = get_articles(FEEDS)
-
-        # 3. Filter New
         new_articles = state_manager.filter_new(all_articles)
 
         if not new_articles:
             print("No new articles today!")
         else:
-            # 4. Analyze
             if GEMINI_API_KEY:
                 final_list = analyze_with_gemini(new_articles)
                 method = "AI"
@@ -331,11 +341,13 @@ if __name__ == "__main__":
                 final_list = score_mechanically(new_articles)
                 method = "Mechanical"
 
-            # 5. Send
             if final_list:
                 send_email(final_list, method=method)
 
-                # 6. Save State (Mark the ones we processed as seen)
                 # We mark ALL new_articles found as seen, so we don't re-process
                 # the "rejected" ones tomorrow.
                 state_manager.save_processed(new_articles)
+
+
+if __name__ == "__main__":
+    main()
