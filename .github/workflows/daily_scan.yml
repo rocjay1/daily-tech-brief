@@ -3,14 +3,13 @@ name: Daily Tech Brief
 on:
   schedule:
     # Runs at 13:00 UTC (8:00 AM CST) every Monday-Friday
-    - cron: '0 13 * * 1-5'
-  workflow_dispatch: # Allows manual trigger for testing
+    - cron: '0 12 * * 1-5'
+  workflow_dispatch:
 
 jobs:
   run-daily-brief:
     runs-on: ubuntu-latest
     
-    # REQUIRED PERMISSIONS for OIDC/WIF
     permissions:
       contents: read
       id-token: write 
@@ -19,17 +18,13 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. Authenticate to Google Cloud using Workload Identity Federation
-      # This swaps the GitHub OIDC token for a Google Access Token
       - id: 'auth'
         name: 'Authenticate to GCP'
         uses: 'google-github-actions/auth@v2'
         with:
-          # REPLACE THESE with the outputs from your Terraform run
           workload_identity_provider: 'projects/${{secrets.GCP_PROJECT_NUM}}/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider'
           service_account: 'github-actions-runner@${{secrets.GCP_PROJECT_ID}}.iam.gserviceaccount.com'
 
-      # 2. Fetch the Gmail App Password from Secret Manager
       - id: 'secrets'
         name: 'Fetch Secrets'
         uses: 'google-github-actions/get-secretmanager-secrets@v2'
@@ -38,22 +33,19 @@ jobs:
             email_pass:projects/${{secrets.GCP_PROJECT_ID}}/secrets/gmail-app-password
             gemini_key:projects/${{secrets.GCP_PROJECT_ID}}/secrets/gemini-api-key
 
-      # 3. Setup Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # 4. Install Dependencies
-      - name: Install Libraries
+      - name: Install Dependencies
         run: pip install -r requirements.txt
 
-      # 5. Run Script
       - name: Run Briefing Script
         env:
-          EMAIL_USER: ${{ secrets.EMAIL_USER }} # Your actual Gmail address
-          EMAIL_PASS: ${{ steps.secrets.outputs.email_pass }} # Injected securely from Step 2
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ steps.secrets.outputs.email_pass }}
           EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
           GEMINI_KEY: ${{ steps.secrets.outputs.gemini_key }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }} # Injected here for Firestore
         run: python src/daily_brief.py
-        

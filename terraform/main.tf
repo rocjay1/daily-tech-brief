@@ -20,13 +20,25 @@ resource "google_project_service" "services" {
     "secretmanager.googleapis.com",
     "iamcredentials.googleapis.com",
     "sts.googleapis.com",
-    "generativelanguage.googleapis.com" # Enable Gemini API
+    "generativelanguage.googleapis.com", # Gemini
+    "firestore.googleapis.com"           # Firestore (New)
   ])
   service            = each.key
   disable_on_destroy = false
 }
 
-# 2. Secret Manager: Create containers for secrets
+# 2. Firestore Database (New)
+# This creates a "Native" mode Firestore database in your region
+resource "google_firestore_database" "database" {
+  project     = var.gcp_project_id
+  name        = "(default)"
+  location_id = var.gcp_region
+  type        = "FIRESTORE_NATIVE"
+
+  depends_on = [google_project_service.services]
+}
+
+# 3. Secret Manager
 resource "google_secret_manager_secret" "gmail_pass" {
   secret_id = "gmail-app-password"
   replication {
@@ -43,13 +55,14 @@ resource "google_secret_manager_secret" "gemini_key" {
   depends_on = [google_project_service.services]
 }
 
-# 3. Service Account for GitHub Actions
+# 4. Service Account
 resource "google_service_account" "github_runner" {
   account_id   = "github-actions-runner"
   display_name = "GitHub Actions Service Account"
 }
 
-# 4. IAM: Grant specific access to secrets
+# 5. IAM Permissions
+# Allow reading secrets
 resource "google_secret_manager_secret_iam_member" "gmail_access" {
   secret_id = google_secret_manager_secret.gmail_pass.id
   role      = "roles/secretmanager.secretAccessor"
@@ -62,7 +75,14 @@ resource "google_secret_manager_secret_iam_member" "gemini_access" {
   member    = "serviceAccount:${google_service_account.github_runner.email}"
 }
 
-# 5. Workload Identity Federation
+# Allow reading/writing to Firestore (New)
+resource "google_project_iam_member" "firestore_user" {
+  project = var.gcp_project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.github_runner.email}"
+}
+
+# 6. Workload Identity Federation
 resource "google_iam_workload_identity_pool" "github_pool" {
   workload_identity_pool_id = "github-actions-pool"
   display_name              = "GitHub Actions Pool"
@@ -87,7 +107,6 @@ resource "google_iam_workload_identity_pool_provider" "github_provider" {
   }
 }
 
-# 6. Bind GitHub Repo to Service Account
 resource "google_service_account_iam_member" "wif_binding" {
   service_account_id = google_service_account.github_runner.name
   role               = "roles/iam.workloadIdentityUser"
