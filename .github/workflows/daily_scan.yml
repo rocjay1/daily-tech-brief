@@ -2,7 +2,7 @@ name: Daily Tech Brief
 
 on:
   schedule:
-    # Runs at 13:00 UTC (8:00 AM CST) every Monday-Friday
+    # Runs at 12:00 UTC (7:00 AM CST) every Monday-Friday
     - cron: '0 12 * * 1-5'
   workflow_dispatch:
 
