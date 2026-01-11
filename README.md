@@ -1,10 +1,10 @@
 # Automated Tech Briefing System 🚀
 
-A Python-based RSS aggregator that sends a daily email summary of Cloud, Azure, Linux, and AI engineering news. It runs on GitHub Actions, uses **Google Cloud Firestore** for deduplication, and leverages **Google Gemini 2.0 Flash** to intelligently curate and summarize the most relevant articles.
+A Python-based RSS aggregator that sends a daily email summary of Azure, Terraform, GitHub Actions, and AI Engineering news. It runs on GitHub Actions, uses **Google Cloud Firestore** for deduplication, and leverages **Google Gemini 2.0 Flash** to intelligently curate and summarize the most relevant articles.
 
 ## Features
 
-* **Smart Curation:** Uses Google Gemini 2.0 Flash to analyze hundreds of headlines and select the top 15 highest-signal articles for a Cloud/DevOps Engineer.
+* **Smart Curation:** Uses Google Gemini 2.0 Flash to analyze hundreds of headlines and select the top 15 highest-signal articles for a Corporate Cloud & AI Engineer.
 * **Deduplication:** Uses Google Cloud Firestore to track seen articles, ensuring you never get the same story twice.
 * **Keyless Security:** Authenticates to Google Cloud via Workload Identity Federation (no long-lived JSON keys).
 * **Automated:** Runs automatically Mon-Fri at 7:00 AM CST via GitHub Actions.

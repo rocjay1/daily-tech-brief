@@ -32,7 +32,7 @@ def load_config(config_filename: str = "config.json") -> Dict[str, Any]:
             return json.load(f)
     except FileNotFoundError:
         print(f"⚠️ Config file not found at {config_path}. Using empty config.")
-        return {"feeds": {}, "weights": {}}
+        return {"feeds": {}}
 
 
 CONFIG = load_config()
@@ -195,9 +195,6 @@ def get_articles(feeds: Dict[str, str]) -> List[Dict[str, Any]]:
     return raw_items
 
 
-
-
-
 def analyze_with_gemini(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Uses Google Gemini to select the best articles."""
     print("✨ API Key found. Asking Gemini to curate the list...")
@@ -212,20 +209,32 @@ def analyze_with_gemini(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     )
 
     prompt = f"""
-    You are an intelligent assistant for a Cloud System Engineer working at a large tech company.
-    Role: Focus on Azure, Terraform, Python, Linux Kernel, CI/CD, and AI Engineering (LLMs).
+    You are an intelligent assistant for a Corporate IT System Engineer focusing on Cloud and AI Engineering.
 
-    Task: Review these RSS headlines and pick the Top {TOP_N_ARTICLES} most relevant items.
+    User Persona:
+    - Role: Internal Corporate IT System Engineer at a tech company.
+    - Core Stack: Microsoft Azure, Terraform, Python, GitHub Actions.
+    - Primary Work: Cloud-native hosting (Websites, Serverless, Storage, Networking).
+    - Recent Focus: AI Engineering (Deploying LLM endpoints, configuring AuthN/AuthZ for developer access).
+    - Context: Recently migrated from GitLab to GitHub.
 
-    Criteria:
-    - High Priority: Deep technical dives (Phoronix/LWN), Terraform/OpenTofu updates, Practical AI Engineering.
-    - Educational: Good educational content explaining complex topics (like Kernel internals, AI architecture, or Network protocols) is highly valued.
-    - Ignore: Fluff, pure marketing, or extremely basic "Hello World" tutorials.
+    Task: Review the provided RSS headlines and curate the Top {TOP_N_ARTICLES} most relevant articles.
+
+    Selection Criteria:
+    1. **High Priority**: 
+       - Practical guides on deploying and securing LLMs/AI endpoints on Azure.
+       - Terraform updates (Azure provider, best practices, state management).
+       - GitHub Actions workflows (CI/CD optimization, security, custom actions).
+       - Azure serverless & networking updates (Container Apps, Functions, Private Link, DNS).
+    2. **Educational**: 
+       - Deep dives into cloud-native architectures, authentication patterns (OIDC, OAuth) for AI, and Python automation.
+    3. **Ignore**: 
+       - Generic consumer tech news, pure marketing fluff, extremely basic "Hello World" tutorials, or GitLab-specific content.
 
     Input Data:
     {items_str}
 
-    Output Format: JSON only. A list of objects with fields: "id" (int) and "analysis" (string - a 1 sentence explanation of why this matters).
+    Output Format: JSON only. A list of objects with fields: "id" (int) and "analysis" (string - a 1 sentence explanation of why this matters to an Azure/Terraform/AI engineer).
     """
 
     client = genai.Client(api_key=GEMINI_API_KEY)
@@ -262,7 +271,9 @@ def send_email(articles: List[Dict[str, Any]]) -> None:
             <div style="padding: 20px;">
     """
     for item in articles:
-        description = f"<b>Why it matters:</b> {item.get('reason', '')}<br><br>{item['summary']}"
+        description = (
+            f"<b>Why it matters:</b> {item.get('reason', '')}<br><br>{item['summary']}"
+        )
         html_content += f"""
         <div style="margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
             <span style="font-size: 11px; font-weight: bold; color: #666;
