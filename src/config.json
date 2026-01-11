@@ -1,33 +1,17 @@
 {
     "feeds": {
+        "Azure Updates": "https://www.microsoft.com/releasecommunications/api/v2/azure/rss",
+        "GitHub Changelog": "https://github.blog/changelog/feed/",
         "Azure Blog": "https://azure.microsoft.com/en-us/blog/feed/",
         "Azure Tools (Terraform)": "https://techcommunity.microsoft.com/gscwv57232/rss/board?board.id=AzureToolsBlog",
         "Spacelift (IaC Deep Dives)": "https://spacelift.io/blog/feed",
         "Firefly (Cloud Governance)": "https://www.firefly.ai/blog/rss.xml",
+        "Microsoft DevOps": "https://devblogs.microsoft.com/devops/feed/",
+        "GitHub Engineering": "https://github.blog/category/engineering/feed/",
         "Latent Space (AI Engineering)": "https://www.latent.space/feed",
         "The Batch (DeepLearning.AI)": "https://www.deeplearning.ai/the-batch/feed/",
         "TLDR AI": "https://tldr.tech/ai/rss",
         "LWN (Linux Kernel)": "https://lwn.net/headlines/rss",
-        "Phoronix (Linux Hardware)": "https://www.phoronix.com/rss.php",
-        "Julia Evans (Wizard Zines)": "https://jvns.ca/atom.xml",
-        "GitHub Engineering": "https://github.blog/category/engineering/feed/",
-        "Microsoft DevOps": "https://devblogs.microsoft.com/devops/feed/"
-    },
-    "weights": {
-        "Terraform": 5,
-        "OpenTofu": 5,
-        "Azure": 4,
-        "LLM": 4,
-        "Security": 4,
-        "GitHub Actions": 3,
-        "CI/CD": 3,
-        "Identity": 3,
-        "Linux": 3,
-        "Kernel": 3,
-        "Bicep": 1,
-        "Copilot": 1,
-        "eBPF": 1,
-        "Kubernetes": 1,
-        "Python": 1
+        "Julia Evans (Wizard Zines)": "https://jvns.ca/atom.xml"
     }
 }
