@@ -1,3 +1,3 @@
-feedparser
-google-genai
-google-cloud-firestore
+feedparser==6.0.12
+google-genai==1.57.0
+google-cloud-firestore==2.22.0

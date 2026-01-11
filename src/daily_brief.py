@@ -4,6 +4,7 @@ This script fetches RSS feeds, deduplicates articles using Firestore,
 curates them using Google Gemini, and sends an email summary.
 """
 
+import concurrent.futures
 import datetime
 import hashlib
 import json
@@ -12,51 +13,30 @@ import re
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from typing import Dict, List, Any, Optional
 
 import feedparser
 from google import genai
 from google.cloud import firestore
 
 
-FEEDS = {
-    # Cloud & Infrastructure (Azure/Terraform)
-    "Azure Blog": "https://azure.microsoft.com/en-us/blog/feed/",
-    "Azure Tools (Terraform)": (
-        "https://techcommunity.microsoft.com/gscwv57232/rss/board?board.id=AzureToolsBlog"
-    ),
-    "Spacelift (IaC Deep Dives)": "https://spacelift.io/blog/feed",
-    "Firefly (Cloud Governance)": "https://www.firefly.ai/blog/rss.xml",
-    # AI Engineering & LLMs
-    "Latent Space (AI Engineering)": "https://www.latent.space/feed",
-    "The Batch (DeepLearning.AI)": "https://www.deeplearning.ai/the-batch/feed/",
-    "TLDR AI": "https://tldr.tech/ai/rss",
-    # Linux & Systems
-    "LWN (Linux Kernel)": "https://lwn.net/headlines/rss",
-    "Phoronix (Linux Hardware)": "https://www.phoronix.com/rss.php",
-    "Julia Evans (Wizard Zines)": "https://jvns.ca/atom.xml",
-    # DevOps & GitHub
-    "GitHub Engineering": "https://github.blog/category/engineering/feed/",
-    "Microsoft DevOps": "https://devblogs.microsoft.com/devops/feed/",
-}
+def load_config(config_filename: str = "config.json") -> Dict[str, Any]:
+    """Loads configuration from a JSON file."""
+    # Build absolute path relative to this script
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(base_dir, config_filename)
 
-# Fallback Weights (used if API Key is missing/fails)
-WEIGHTS = {
-    "Terraform": 5,
-    "OpenTofu": 5,
-    "Azure": 4,
-    "LLM": 4,
-    "Security": 4,
-    "GitHub Actions": 3,
-    "CI/CD": 3,
-    "Identity": 3,
-    "Linux": 3,
-    "Kernel": 3,
-    "Bicep": 1,
-    "Copilot": 1,
-    "eBPF": 1,
-    "Kubernetes": 1,
-    "Python": 1,
-}
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"⚠️ Config file not found at {config_path}. Using empty config.")
+        return {"feeds": {}, "weights": {}}
+
+
+CONFIG = load_config()
+FEEDS = CONFIG.get("feeds", {})
+WEIGHTS = CONFIG.get("weights", {})
 
 TOP_N_ARTICLES = 15
 
@@ -74,7 +54,7 @@ SMTP_PORT = 587
 class StateManager:
     """Handles deduplication using Google Firestore."""
 
-    def __init__(self, project_id):
+    def __init__(self, project_id: Optional[str]):
         if not project_id:
             print("⚠️ GCP_PROJECT_ID not set. Deduplication disabled.")
             self.db = None
@@ -88,11 +68,11 @@ class StateManager:
             print(f"⚠️ Firestore connection failed: {e}")
             self.db = None
 
-    def get_id(self, url):
+    def get_id(self, url: str) -> str:
         """Creates a deterministic hash of the URL."""
         return hashlib.md5(url.encode("utf-8")).hexdigest()
 
-    def filter_new(self, articles):
+    def filter_new(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Returns only articles that haven't been seen before."""
         if not self.db or not articles:
             return articles
@@ -127,7 +107,7 @@ class StateManager:
         )
         return new_articles
 
-    def save_processed(self, articles):
+    def save_processed(self, articles: List[Dict[str, Any]]) -> None:
         """Marks articles as seen."""
         if not self.db or not articles:
             return
@@ -158,7 +138,7 @@ class StateManager:
         print(f"💾 Saved {len(articles)} articles to history.")
 
 
-def clean_html(raw_html):
+def clean_html(raw_html: Optional[str]) -> str:
     """Removes HTML tags from a string."""
     if not raw_html:
         return ""
@@ -167,38 +147,55 @@ def clean_html(raw_html):
     return " ".join(text.split())
 
 
-def get_articles(feeds):
-    """Fetches and parses RSS feeds."""
+def fetch_feed(source: str, url: str) -> List[Dict[str, Any]]:
+    """Fetches and parses a single RSS feed."""
+    items = []
+    try:
+        # Add a user-agent to prevent 403s from some strict blogs
+        feed = feedparser.parse(url, agent="DailyTechBriefBot/1.0")
+        for entry in feed.entries:
+            title = entry.title if hasattr(entry, "title") else ""
+            raw_summary = entry.summary if hasattr(entry, "summary") else ""
+            link = entry.link if hasattr(entry, "link") else "#"
+            clean_summary = clean_html(raw_summary)
+            text_content = f"{title} - {clean_summary[:300]}"
+
+            items.append(
+                {
+                    "source": source,
+                    "title": title,
+                    "link": link,
+                    "summary": clean_summary[:250] + "...",
+                    "full_text": text_content,
+                }
+            )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        print(f"Error parsing {source}: {e}")
+    return items
+
+
+def get_articles(feeds: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Fetches and parses RSS feeds in parallel."""
     raw_items = []
     print(f"--- Starting Scan for {datetime.datetime.now().strftime('%Y-%m-%d')} ---")
 
-    for source, url in feeds.items():
-        try:
-            # Add a user-agent to prevent 403s from some strict blogs
-            feed = feedparser.parse(url, agent="DailyTechBriefBot/1.0")
-            for entry in feed.entries:
-                title = entry.title if hasattr(entry, "title") else ""
-                raw_summary = entry.summary if hasattr(entry, "summary") else ""
-                link = entry.link if hasattr(entry, "link") else "#"
-                clean_summary = clean_html(raw_summary)
-                text_content = f"{title} - {clean_summary[:300]}"
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_to_source = {
+            executor.submit(fetch_feed, source, url): source
+            for source, url in feeds.items()
+        }
+        for future in concurrent.futures.as_completed(future_to_source):
+            try:
+                items = future.result()
+                raw_items.extend(items)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                source = future_to_source[future]
+                print(f"{source} generated an exception: {exc}")
 
-                raw_items.append(
-                    {
-                        "source": source,
-                        "title": title,
-                        "link": link,
-                        "summary": clean_summary[:250] + "...",
-                        "full_text": text_content,
-                    }
-                )
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            print(f"Error parsing {source}: {e}")
-            continue
     return raw_items
 
 
-def score_mechanically(articles):
+def score_mechanically(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Scores articles based on keywords if AI is unavailable."""
     print("🤖 No API Key found. Using Mechanical Scoring.")
     scored = []
@@ -219,7 +216,7 @@ def score_mechanically(articles):
     return scored[:TOP_N_ARTICLES]
 
 
-def analyze_with_gemini(articles):
+def analyze_with_gemini(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Uses Google Gemini to select the best articles."""
     print("✨ API Key found. Asking Gemini to curate the list...")
     # Pre-filter top 80 to save tokens
@@ -269,7 +266,7 @@ def analyze_with_gemini(articles):
         return score_mechanically(articles)
 
 
-def send_email(articles, method="Mechanical"):
+def send_email(articles: List[Dict[str, Any]], method: str = "Mechanical") -> None:
     """Formats and sends the daily brief via email."""
     if not articles:
         print("No articles to send.")
