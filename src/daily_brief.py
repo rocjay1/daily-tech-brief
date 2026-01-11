@@ -11,6 +11,7 @@ import json
 import os
 import re
 import smtplib
+import sys
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Dict, List, Any, Optional
@@ -36,7 +37,6 @@ def load_config(config_filename: str = "config.json") -> Dict[str, Any]:
 
 CONFIG = load_config()
 FEEDS = CONFIG.get("feeds", {})
-WEIGHTS = CONFIG.get("weights", {})
 
 TOP_N_ARTICLES = 15
 
@@ -195,25 +195,7 @@ def get_articles(feeds: Dict[str, str]) -> List[Dict[str, Any]]:
     return raw_items
 
 
-def score_mechanically(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Scores articles based on keywords if AI is unavailable."""
-    print("🤖 No API Key found. Using Mechanical Scoring.")
-    scored = []
-    for item in articles:
-        score = 0
-        matched = []
-        text_lower = (item["title"] + " " + item["summary"]).lower()
-        for word, weight in WEIGHTS.items():
-            if word.lower() in text_lower:
-                score += weight
-                matched.append(word)
-        if score > 0:
-            item["score"] = score
-            item["tags"] = list(set(matched))
-            item["reason"] = "Keyword Match"
-            scored.append(item)
-    scored.sort(key=lambda x: x["score"], reverse=True)
-    return scored[:TOP_N_ARTICLES]
+
 
 
 def analyze_with_gemini(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -246,27 +228,23 @@ def analyze_with_gemini(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     Output Format: JSON only. A list of objects with fields: "id" (int) and "analysis" (string - a 1 sentence explanation of why this matters).
     """
 
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-            config={"response_mime_type": "application/json"},
-        )
-        selections = json.loads(response.text)
-        final_list = []
-        for sel in selections:
-            if sel["id"] < len(candidates):
-                original = candidates[sel["id"]]
-                original["reason"] = sel["analysis"]
-                final_list.append(original)
-        return final_list
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"⚠️ Gemini Error: {e}")
-        return score_mechanically(articles)
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt,
+        config={"response_mime_type": "application/json"},
+    )
+    selections = json.loads(response.text)
+    final_list = []
+    for sel in selections:
+        if sel["id"] < len(candidates):
+            original = candidates[sel["id"]]
+            original["reason"] = sel["analysis"]
+            final_list.append(original)
+    return final_list
 
 
-def send_email(articles: List[Dict[str, Any]], method: str = "Mechanical") -> None:
+def send_email(articles: List[Dict[str, Any]]) -> None:
     """Formats and sends the daily brief via email."""
     if not articles:
         print("No articles to send.")
@@ -276,19 +254,15 @@ def send_email(articles: List[Dict[str, Any]], method: str = "Mechanical") -> No
     <html>
     <body style="font-family: 'Segoe UI', sans-serif; color: #333; line-height: 1.6;">
         <div style="max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px;">
-            <div style="background-color: {'#4b2c92' if method == 'AI' else '#0078D4'};
+            <div style="background-color: #4b2c92;
                         padding: 20px; text-align: center; color: white;">
-                <h2 style="margin:0;">🚀 Daily Brief ({method})</h2>
+                <h2 style="margin:0;">🚀 Daily Brief</h2>
                 <p style="margin:5px 0 0; opacity: 0.9;">Top {len(articles)} Stories</p>
             </div>
             <div style="padding: 20px;">
     """
     for item in articles:
-        description = (
-            f"<b>Why it matters:</b> {item.get('reason', '')}<br><br>{item['summary']}"
-            if method == "AI"
-            else item["summary"]
-        )
+        description = f"<b>Why it matters:</b> {item.get('reason', '')}<br><br>{item['summary']}"
         html_content += f"""
         <div style="margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
             <span style="font-size: 11px; font-weight: bold; color: #666;
@@ -305,7 +279,7 @@ def send_email(articles: List[Dict[str, Any]], method: str = "Mechanical") -> No
     msg = MIMEMultipart()
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECIPIENT
-    msg["Subject"] = f"Daily Brief: {len(articles)} Updates ({method})"
+    msg["Subject"] = f"Daily Brief: {len(articles)} Updates"
     msg.attach(MIMEText(html_content, "html"))
 
     try:
@@ -323,27 +297,26 @@ def main():
     """Main execution entry point."""
     if not EMAIL_SENDER:
         print("❌ Error: EMAIL_USER not set.")
+        return
+
+    if not GEMINI_API_KEY:
+        print("❌ Error: GEMINI_KEY not set. Workflow failed.")
+        sys.exit(1)
+
+    state_manager = StateManager(GCP_PROJECT_ID)
+    all_articles = get_articles(FEEDS)
+    new_articles = state_manager.filter_new(all_articles)
+
+    if not new_articles:
+        print("No new articles today!")
     else:
-        state_manager = StateManager(GCP_PROJECT_ID)
-        all_articles = get_articles(FEEDS)
-        new_articles = state_manager.filter_new(all_articles)
+        final_list = analyze_with_gemini(new_articles)
+        if final_list:
+            send_email(final_list)
 
-        if not new_articles:
-            print("No new articles today!")
-        else:
-            if GEMINI_API_KEY:
-                final_list = analyze_with_gemini(new_articles)
-                method = "AI"
-            else:
-                final_list = score_mechanically(new_articles)
-                method = "Mechanical"
-
-            if final_list:
-                send_email(final_list, method=method)
-
-                # We mark ALL new_articles found as seen, so we don't re-process
-                # the "rejected" ones tomorrow.
-                state_manager.save_processed(new_articles)
+            # We mark ALL new_articles found as seen, so we don't re-process
+            # the "rejected" ones tomorrow.
+            state_manager.save_processed(new_articles)
 
 
 if __name__ == "__main__":
