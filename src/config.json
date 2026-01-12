@@ -13,5 +13,7 @@
         "TLDR AI": "https://tldr.tech/ai/rss",
         "LWN (Linux Kernel)": "https://lwn.net/headlines/rss",
         "Julia Evans (Wizard Zines)": "https://jvns.ca/atom.xml"
-    }
+    },
+    "smtp_server": "smtp.gmail.com",
+    "smtp_port": 587
 }
