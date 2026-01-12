@@ -8,6 +8,7 @@ import concurrent.futures
 import datetime
 import hashlib
 import json
+import logging
 import os
 import re
 import smtplib
@@ -21,6 +22,15 @@ from google import genai
 from google.cloud import firestore
 
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+
 def load_config(config_filename: str = "config.json") -> Dict[str, Any]:
     """Loads configuration from a JSON file."""
     # Build absolute path relative to this script
@@ -31,12 +41,14 @@ def load_config(config_filename: str = "config.json") -> Dict[str, Any]:
         with open(config_path, "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
-        print(f"⚠️ Config file not found at {config_path}. Using empty config.")
+        logger.warning("Config file not found at %s. Using empty config.", config_path)
         return {"feeds": {}}
 
 
 CONFIG = load_config()
 FEEDS = CONFIG.get("feeds", {})
+SMTP_SERVER = CONFIG.get("smtp_server", "smtp.gmail.com")
+SMTP_PORT = CONFIG.get("smtp_port", 587)
 
 TOP_N_ARTICLES = 15
 
@@ -47,8 +59,37 @@ EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", EMAIL_SENDER)
 GEMINI_API_KEY = os.environ.get("GEMINI_KEY")
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
+
+def get_gemini_prompt(items_str: str) -> str:
+    """Returns the prompt for Gemini analysis."""
+    return f"""
+    You are an intelligent assistant for a Corporate IT System Engineer focusing on Cloud and AI Engineering.
+
+    User Persona:
+    - Role: Internal Corporate IT System Engineer at a tech company.
+    - Core Stack: Microsoft Azure, Terraform, Python, GitHub Actions.
+    - Primary Work: Cloud-native hosting (Websites, Serverless, Storage, Networking).
+    - Recent Focus: AI Engineering (Deploying LLM endpoints, configuring AuthN/AuthZ for developer access).
+    - Context: Recently migrated from GitLab to GitHub.
+
+    Task: Review the provided RSS headlines and curate the Top {TOP_N_ARTICLES} most relevant articles.
+
+    Selection Criteria:
+    1. **High Priority**:
+       - Practical guides on deploying and securing LLMs/AI endpoints on Azure.
+       - Terraform updates (Azure provider, best practices, state management).
+       - GitHub Actions workflows (CI/CD optimization, security, custom actions).
+       - Azure serverless & networking updates (Container Apps, Functions, Private Link, DNS).
+    2. **Educational**:
+       - Deep dives into cloud-native architectures, authentication patterns (OIDC, OAuth) for AI, and Python automation.
+    3. **Ignore**:
+       - Generic consumer tech news, pure marketing fluff, extremely basic "Hello World" tutorials, or GitLab-specific content.
+
+    Input Data:
+    {items_str}
+
+    Output Format: JSON only. A list of objects with fields: "id" (int) and "analysis" (string - a 1 sentence explanation of why this matters to an Azure/Terraform/AI engineer).
+    """
 
 
 class StateManager:
@@ -56,16 +97,16 @@ class StateManager:
 
     def __init__(self, project_id: Optional[str]):
         if not project_id:
-            print("⚠️ GCP_PROJECT_ID not set. Deduplication disabled.")
+            logger.warning("GCP_PROJECT_ID not set. Deduplication disabled.")
             self.db = None
             return
 
         try:
             self.db = firestore.Client(project=project_id)
             self.collection = self.db.collection("seen_articles")
-            print("✅ Connected to Firestore for deduplication.")
+            logger.info("Connected to Firestore for deduplication.")
         except Exception as e:  # pylint: disable=broad-exception-caught
-            print(f"⚠️ Firestore connection failed: {e}")
+            logger.warning("Firestore connection failed: %s", e)
             self.db = None
 
     def get_id(self, url: str) -> str:
@@ -102,8 +143,8 @@ class StateManager:
             if aid not in seen_ids:
                 new_articles.append(article)
 
-        print(
-            f"🔍 Deduplication: {len(articles)} processed -> {len(new_articles)} new."
+        logger.info(
+            "Deduplication: %d processed -> %d new.", len(articles), len(new_articles)
         )
         return new_articles
 
@@ -135,7 +176,7 @@ class StateManager:
 
         if count > 0:
             batch.commit()
-        print(f"💾 Saved {len(articles)} articles to history.")
+        logger.info("Saved %d articles to history.", len(articles))
 
 
 def clean_html(raw_html: Optional[str]) -> str:
@@ -170,14 +211,14 @@ def fetch_feed(source: str, url: str) -> List[Dict[str, Any]]:
                 }
             )
     except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"Error parsing {source}: {e}")
+        logger.error("Error parsing %s: %s", source, e)
     return items
 
 
 def get_articles(feeds: Dict[str, str]) -> List[Dict[str, Any]]:
     """Fetches and parses RSS feeds in parallel."""
     raw_items = []
-    print(f"--- Starting Scan for {datetime.datetime.now().strftime('%Y-%m-%d')} ---")
+    logger.info("--- Starting Scan for %s ---", datetime.datetime.now().strftime('%Y-%m-%d'))
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future_to_source = {
@@ -190,14 +231,14 @@ def get_articles(feeds: Dict[str, str]) -> List[Dict[str, Any]]:
                 raw_items.extend(items)
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 source = future_to_source[future]
-                print(f"{source} generated an exception: {exc}")
+                logger.error("%s generated an exception: %s", source, exc)
 
     return raw_items
 
 
 def analyze_with_gemini(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Uses Google Gemini to select the best articles."""
-    print("✨ API Key found. Asking Gemini to curate the list...")
+    logger.info("API Key found. Asking Gemini to curate the list...")
     # Pre-filter top 80 to save tokens
     candidates = articles[:80]
 
@@ -208,34 +249,7 @@ def analyze_with_gemini(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         ]
     )
 
-    prompt = f"""
-    You are an intelligent assistant for a Corporate IT System Engineer focusing on Cloud and AI Engineering.
-
-    User Persona:
-    - Role: Internal Corporate IT System Engineer at a tech company.
-    - Core Stack: Microsoft Azure, Terraform, Python, GitHub Actions.
-    - Primary Work: Cloud-native hosting (Websites, Serverless, Storage, Networking).
-    - Recent Focus: AI Engineering (Deploying LLM endpoints, configuring AuthN/AuthZ for developer access).
-    - Context: Recently migrated from GitLab to GitHub.
-
-    Task: Review the provided RSS headlines and curate the Top {TOP_N_ARTICLES} most relevant articles.
-
-    Selection Criteria:
-    1. **High Priority**: 
-       - Practical guides on deploying and securing LLMs/AI endpoints on Azure.
-       - Terraform updates (Azure provider, best practices, state management).
-       - GitHub Actions workflows (CI/CD optimization, security, custom actions).
-       - Azure serverless & networking updates (Container Apps, Functions, Private Link, DNS).
-    2. **Educational**: 
-       - Deep dives into cloud-native architectures, authentication patterns (OIDC, OAuth) for AI, and Python automation.
-    3. **Ignore**: 
-       - Generic consumer tech news, pure marketing fluff, extremely basic "Hello World" tutorials, or GitLab-specific content.
-
-    Input Data:
-    {items_str}
-
-    Output Format: JSON only. A list of objects with fields: "id" (int) and "analysis" (string - a 1 sentence explanation of why this matters to an Azure/Terraform/AI engineer).
-    """
+    prompt = get_gemini_prompt(items_str)
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     response = client.models.generate_content(
@@ -256,7 +270,7 @@ def analyze_with_gemini(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def send_email(articles: List[Dict[str, Any]]) -> None:
     """Formats and sends the daily brief via email."""
     if not articles:
-        print("No articles to send.")
+        logger.info("No articles to send.")
         return
 
     html_content = f"""
@@ -299,19 +313,19 @@ def send_email(articles: List[Dict[str, Any]]) -> None:
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
         server.send_message(msg)
         server.quit()
-        print("✅ Email sent.")
+        logger.info("Email sent.")
     except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"❌ Email failed: {e}")
+        logger.error("Email failed: %s", e)
 
 
 def main():
     """Main execution entry point."""
     if not EMAIL_SENDER:
-        print("❌ Error: EMAIL_USER not set.")
+        logger.error("Error: EMAIL_USER not set.")
         return
 
     if not GEMINI_API_KEY:
-        print("❌ Error: GEMINI_KEY not set. Workflow failed.")
+        logger.error("Error: GEMINI_KEY not set. Workflow failed.")
         sys.exit(1)
 
     state_manager = StateManager(GCP_PROJECT_ID)
@@ -319,7 +333,7 @@ def main():
     new_articles = state_manager.filter_new(all_articles)
 
     if not new_articles:
-        print("No new articles today!")
+        logger.info("No new articles today!")
     else:
         final_list = analyze_with_gemini(new_articles)
         if final_list:
