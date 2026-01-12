@@ -86,7 +86,7 @@ def get_gemini_prompt(items_str: str, limit: int) -> str:
     Input Data:
     {items_str}
 
-    Output Format: JSON only. A list of objects with fields: "id" (int) and "analysis" (string - a 1 sentence explanation of why this matters to an Azure/Terraform/AI engineer).
+    Output Format: JSON only. List of objects: "id" (int), "analysis" (string - 1 sentence explanation).
     """
 
 
@@ -236,16 +236,14 @@ def get_articles(feeds: Dict[str, str]) -> List[Dict[str, Any]]:
 
 def analyze_with_gemini(articles: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
     """Uses Google Gemini to select the best articles."""
-    logger.info("API Key found. Asking Gemini to curate the list (limit %d)...", limit)
+    logger.info("API Key found. Asking Gemini to curate (limit %d)...", limit)
     # Pre-filter top 80 to save tokens
     candidates = articles[:80]
 
-    items_str = json.dumps(
-        [
-            {"id": i, "source": a["source"], "text": a["full_text"]}
-            for i, a in enumerate(candidates)
-        ]
-    )
+    items_str = json.dumps([
+        {"id": i, "source": a["source"], "text": a["full_text"]}
+        for i, a in enumerate(candidates)
+    ])
 
     prompt = get_gemini_prompt(items_str, limit)
 
@@ -287,7 +285,8 @@ def send_email(platform_articles: List[Dict[str, Any]], blog_articles: List[Dict
     def render_section(title: str, items: List[Dict[str, Any]]) -> str:
         if not items:
             return ""
-        section_html = f"<h3 style='border-bottom: 2px solid #4b2c92; padding-bottom: 5px; margin-top: 30px;'>{title}</h3>"
+        section_style = "border-bottom: 2px solid #4b2c92; padding-bottom: 5px; margin-top: 30px;"
+        section_html = f"<h3 style='{section_style}'>{title}</h3>"
         for item in items:
             description = (
                 f"<b>Why it matters:</b> {item.get('reason', '')}<br><br>{item['summary']}"
