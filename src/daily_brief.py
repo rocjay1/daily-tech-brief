@@ -50,8 +50,6 @@ FEEDS = CONFIG.get("feeds", {})
 SMTP_SERVER = CONFIG.get("smtp_server", "smtp.gmail.com")
 SMTP_PORT = CONFIG.get("smtp_port", 587)
 
-TOP_N_ARTICLES = 15
-
 # Env Vars
 EMAIL_SENDER = os.environ.get("EMAIL_USER")
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASS")
@@ -60,7 +58,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_KEY")
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 
 
-def get_gemini_prompt(items_str: str) -> str:
+def get_gemini_prompt(items_str: str, limit: int) -> str:
     """Returns the prompt for Gemini analysis."""
     return f"""
     You are an intelligent assistant for a Corporate IT System Engineer focusing on Cloud and AI Engineering.
@@ -72,7 +70,7 @@ def get_gemini_prompt(items_str: str) -> str:
     - Recent Focus: AI Engineering (Deploying LLM endpoints, configuring AuthN/AuthZ for developer access).
     - Context: Recently migrated from GitLab to GitHub.
 
-    Task: Review the provided RSS headlines and curate the Top {TOP_N_ARTICLES} most relevant articles.
+    Task: Review the provided RSS headlines and curate the Top {limit} most relevant articles.
 
     Selection Criteria:
     1. **High Priority**:
@@ -236,9 +234,9 @@ def get_articles(feeds: Dict[str, str]) -> List[Dict[str, Any]]:
     return raw_items
 
 
-def analyze_with_gemini(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def analyze_with_gemini(articles: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
     """Uses Google Gemini to select the best articles."""
-    logger.info("API Key found. Asking Gemini to curate the list...")
+    logger.info("API Key found. Asking Gemini to curate the list (limit %d)...", limit)
     # Pre-filter top 80 to save tokens
     candidates = articles[:80]
 
@@ -249,7 +247,7 @@ def analyze_with_gemini(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         ]
     )
 
-    prompt = get_gemini_prompt(items_str)
+    prompt = get_gemini_prompt(items_str, limit)
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     response = client.models.generate_content(
@@ -267,9 +265,10 @@ def analyze_with_gemini(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return final_list
 
 
-def send_email(articles: List[Dict[str, Any]]) -> None:
+def send_email(platform_articles: List[Dict[str, Any]], blog_articles: List[Dict[str, Any]]) -> None:
     """Formats and sends the daily brief via email."""
-    if not articles:
+    total_articles = len(platform_articles) + len(blog_articles)
+    if total_articles == 0:
         logger.info("No articles to send.")
         return
 
@@ -280,31 +279,41 @@ def send_email(articles: List[Dict[str, Any]]) -> None:
             <div style="background-color: #4b2c92;
                         padding: 20px; text-align: center; color: white;">
                 <h2 style="margin:0;">🚀 Daily Brief</h2>
-                <p style="margin:5px 0 0; opacity: 0.9;">Top {len(articles)} Stories</p>
+                <p style="margin:5px 0 0; opacity: 0.9;">Top {total_articles} Stories</p>
             </div>
             <div style="padding: 20px;">
     """
-    for item in articles:
-        description = (
-            f"<b>Why it matters:</b> {item.get('reason', '')}<br><br>{item['summary']}"
-        )
-        html_content += f"""
-        <div style="margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
-            <span style="font-size: 11px; font-weight: bold; color: #666;
-                         text-transform: uppercase;">{item['source']}</span>
-            <h3 style="margin: 5px 0; font-size: 18px;">
-                <a href="{item['link']}"
-                   style="text-decoration: none; color: #0078D4;">{item['title']}</a>
-            </h3>
-            <p style="font-size: 14px; color: #444; margin-top: 5px;">{description}</p>
-        </div>
-        """
+
+    def render_section(title: str, items: List[Dict[str, Any]]) -> str:
+        if not items:
+            return ""
+        section_html = f"<h3 style='border-bottom: 2px solid #4b2c92; padding-bottom: 5px; margin-top: 30px;'>{title}</h3>"
+        for item in items:
+            description = (
+                f"<b>Why it matters:</b> {item.get('reason', '')}<br><br>{item['summary']}"
+            )
+            section_html += f"""
+            <div style="margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+                <span style="font-size: 11px; font-weight: bold; color: #666;
+                             text-transform: uppercase;">{item['source']}</span>
+                <h3 style="margin: 5px 0; font-size: 18px;">
+                    <a href="{item['link']}"
+                       style="text-decoration: none; color: #0078D4;">{item['title']}</a>
+                </h3>
+                <p style="font-size: 14px; color: #444; margin-top: 5px;">{description}</p>
+            </div>
+            """
+        return section_html
+
+    html_content += render_section("Platform Updates", platform_articles)
+    html_content += render_section("Blog Posts", blog_articles)
+
     html_content += "</div></div></body></html>"
 
     msg = MIMEMultipart()
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECIPIENT
-    msg["Subject"] = f"Daily Brief: {len(articles)} Updates"
+    msg["Subject"] = f"Daily Brief: {total_articles} Updates"
     msg.attach(MIMEText(html_content, "html"))
 
     try:
@@ -329,19 +338,38 @@ def main():
         sys.exit(1)
 
     state_manager = StateManager(GCP_PROJECT_ID)
-    all_articles = get_articles(FEEDS)
-    new_articles = state_manager.filter_new(all_articles)
 
-    if not new_articles:
+    # Load separate feed groups
+    platform_feeds = FEEDS.get("platform_updates", {})
+    blog_feeds = FEEDS.get("blogs", {})
+
+    # Fetch articles
+    raw_platform = get_articles(platform_feeds)
+    raw_blogs = get_articles(blog_feeds)
+
+    # Deduplicate
+    new_platform = state_manager.filter_new(raw_platform)
+    new_blogs = state_manager.filter_new(raw_blogs)
+
+    if not new_platform and not new_blogs:
         logger.info("No new articles today!")
-    else:
-        final_list = analyze_with_gemini(new_articles)
-        if final_list:
-            send_email(final_list)
+        return
 
-            # We mark ALL new_articles found as seen, so we don't re-process
-            # the "rejected" ones tomorrow.
-            state_manager.save_processed(new_articles)
+    # Analyze / Curate
+    final_platform = []
+    if new_platform:
+        final_platform = analyze_with_gemini(new_platform, limit=15)
+
+    final_blogs = []
+    if new_blogs:
+        final_blogs = analyze_with_gemini(new_blogs, limit=15)
+
+    if final_platform or final_blogs:
+        send_email(final_platform, final_blogs)
+
+        # Save processed state
+        # (We save all deduplicated items, even if not selected, to avoid re-processing)
+        state_manager.save_processed(new_platform + new_blogs)
 
 
 if __name__ == "__main__":
