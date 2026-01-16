@@ -7,6 +7,7 @@ curates them using Google Gemini, and sends an email summary.
 import concurrent.futures
 import datetime
 import hashlib
+import html
 import json
 import logging
 import os
@@ -50,7 +51,7 @@ FEEDS = CONFIG.get("feeds", {})
 SMTP_SERVER = CONFIG.get("smtp_server", "smtp.gmail.com")
 SMTP_PORT = CONFIG.get("smtp_port", 587)
 
-TOP_N_ARTICLES = 15
+TOP_N_ARTICLES = CONFIG.get("top_n", 15)
 
 # Env Vars
 EMAIL_SENDER = os.environ.get("EMAIL_USER")
@@ -72,7 +73,8 @@ def get_gemini_prompt(items_str: str) -> str:
     - Recent Focus: AI Engineering (Deploying LLM endpoints, configuring AuthN/AuthZ for developer access).
     - Context: Recently migrated from GitLab to GitHub.
 
-    Task: Review the provided RSS headlines and curate the Top {TOP_N_ARTICLES} most relevant articles.
+    Task: Review the provided RSS headlines and curate the Top {TOP_N_ARTICLES} most relevant
+    articles.
 
     Selection Criteria:
     1. **High Priority**:
@@ -185,7 +187,25 @@ def clean_html(raw_html: Optional[str]) -> str:
         return ""
     cleaner = re.compile("<.*?>")
     text = re.sub(cleaner, "", raw_html)
+    text = html.unescape(text)
     return " ".join(text.split())
+
+
+def parse_entry(entry: Any, source: str) -> Dict[str, Any]:
+    """Parses a single feed entry."""
+    title = entry.title if hasattr(entry, "title") else ""
+    raw_summary = entry.summary if hasattr(entry, "summary") else ""
+    link = entry.link if hasattr(entry, "link") else "#"
+    clean_summary = clean_html(raw_summary)
+    text_content = f"{title} - {clean_summary[:300]}"
+
+    return {
+        "source": source,
+        "title": title,
+        "link": link,
+        "summary": clean_summary[:250] + "...",
+        "full_text": text_content,
+    }
 
 
 def fetch_feed(source: str, url: str) -> List[Dict[str, Any]]:
@@ -194,22 +214,12 @@ def fetch_feed(source: str, url: str) -> List[Dict[str, Any]]:
     try:
         # Add a user-agent to prevent 403s from some strict blogs
         feed = feedparser.parse(url, agent="DailyTechBriefBot/1.0")
-        for entry in feed.entries:
-            title = entry.title if hasattr(entry, "title") else ""
-            raw_summary = entry.summary if hasattr(entry, "summary") else ""
-            link = entry.link if hasattr(entry, "link") else "#"
-            clean_summary = clean_html(raw_summary)
-            text_content = f"{title} - {clean_summary[:300]}"
+        if feed.bozo:
+            logger.warning("Feed %s has issues: %s", source, feed.bozo_exception)
 
-            items.append(
-                {
-                    "source": source,
-                    "title": title,
-                    "link": link,
-                    "summary": clean_summary[:250] + "...",
-                    "full_text": text_content,
-                }
-            )
+        for entry in feed.entries:
+            items.append(parse_entry(entry, source))
+
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error parsing %s: %s", source, e)
     return items
@@ -318,7 +328,7 @@ def send_email(articles: List[Dict[str, Any]]) -> None:
         logger.error("Email failed: %s", e)
 
 
-def main():
+def main() -> None:
     """Main execution entry point."""
     if not EMAIL_SENDER:
         logger.error("Error: EMAIL_USER not set.")
