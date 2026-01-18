@@ -13,9 +13,10 @@ import os
 import re
 import smtplib
 import sys
+import requests
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, TypedDict
 
 import feedparser
 from google import genai
@@ -58,10 +59,32 @@ GEMINI_API_KEY = os.environ.get("GEMINI_KEY")
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 
 
+class Article(TypedDict):
+    source: str
+    title: str
+    link: str
+    summary: str
+    full_text: str
+    reason: Optional[str]  # Added by Gemini analysis
+
+
+def parse_json_response(text: str) -> Any:
+    """Safely parses JSON from LLM output, handling markdown blocks."""
+    cleaned = text.strip()
+    # Strip Markdown code blocks usually returned by Gemini
+    if cleaned.startswith("```"):
+        # Remove opening ```json or ```
+        cleaned = cleaned.split("\n", 1)[1]
+        # Remove closing ```
+        if cleaned.endswith("```"):
+            cleaned = cleaned.rsplit("\n", 1)[0]
+    
+    return json.loads(cleaned)
+
 def get_gemini_prompt(items_str: str, limit: int) -> str:
     """Returns the prompt for Gemini analysis."""
     return f"""
-    You are an intelligent assistant for a Corporate IT System Engineer focusing on Cloud and AI Engineering.
+    You are a Principal Cloud Architect and AI Engineer acting as an intelligent assistant for a Corporate IT System Engineer.
 
     User Persona:
     - Role: Internal Corporate IT System Engineer at a tech company.
@@ -73,20 +96,24 @@ def get_gemini_prompt(items_str: str, limit: int) -> str:
     Task: Review the provided RSS headlines and curate the Top {limit} most relevant articles.
 
     Selection Criteria:
-    1. **High Priority**:
-       - Practical guides on deploying and securing LLMs/AI endpoints on Azure.
-       - Terraform updates (Azure provider, best practices, state management).
-       - GitHub Actions workflows (CI/CD optimization, security, custom actions).
-       - Azure serverless & networking updates (Container Apps, Functions, Private Link, DNS).
-    2. **Educational**:
-       - Deep dives into cloud-native architectures, authentication patterns (OIDC, OAuth) for AI, and Python automation.
+    1. **High Priority (Must Have)**:
+       - Architectural patterns for deploying and securing LLMs/AI endpoints on Azure.
+       - Advanced Terraform patterns (Azure provider, state management, modules).
+       - GitHub Actions security hardening and reusable workflows.
+       - Azure networking deep dives (Private Link, DNS, Hub-and-Spoke topology).
+    2. **Educational (Good to Have)**:
+       - Cloud-native identity patterns (OIDC, OAuth, Workload Identity).
+       - Python automation best practices for extensive cloud environments.
     3. **Ignore**:
-       - Generic consumer tech news, pure marketing fluff, extremely basic "Hello World" tutorials, or GitLab-specific content.
+       - Generic consumer tech news, product marketing fluff, basic "Hello World" tutorials, or GitLab-specific content.
 
     Input Data:
     {items_str}
 
-    Output Format: JSON only. List of objects: "id" (int), "analysis" (string - 1 sentence explanation).
+    Output Format:
+    - Return a raw JSON list of objects.
+    - DO NOT use Markdown formatting (no ```json blocks).
+    - Object schema: {{"id": int, "analysis": "1 sentence architectural justification"}}
     """
 
 
@@ -191,7 +218,16 @@ def fetch_feed(source: str, url: str) -> List[Dict[str, Any]]:
     items = []
     try:
         # Add a user-agent to prevent 403s from some strict blogs
-        feed = feedparser.parse(url, agent="DailyTechBriefBot/1.0")
+        # Use requests with timeout for robustness
+        try:
+            resp = requests.get(url, timeout=10, headers={"User-Agent": "DailyTechBriefBot/1.0"})
+            resp.raise_for_status()
+            feed_content = resp.content
+        except requests.RequestException as req_err:
+            logger.error("Network error fetching %s: %s", source, req_err)
+            return []
+
+        feed = feedparser.parse(feed_content)
         for entry in feed.entries:
             title = entry.title if hasattr(entry, "title") else ""
             raw_summary = entry.summary if hasattr(entry, "summary") else ""
@@ -200,13 +236,14 @@ def fetch_feed(source: str, url: str) -> List[Dict[str, Any]]:
             text_content = f"{title} - {clean_summary[:300]}"
 
             items.append(
-                {
-                    "source": source,
-                    "title": title,
-                    "link": link,
-                    "summary": clean_summary[:250] + "...",
-                    "full_text": text_content,
-                }
+                Article(
+                    source=source,
+                    title=title,
+                    link=link,
+                    summary=clean_summary[:250] + "...",
+                    full_text=text_content,
+                    reason=None
+                )
             )
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error parsing %s: %s", source, e)
@@ -237,8 +274,8 @@ def get_articles(feeds: Dict[str, str]) -> List[Dict[str, Any]]:
 def analyze_with_gemini(articles: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
     """Uses Google Gemini to select the best articles."""
     logger.info("API Key found. Asking Gemini to curate (limit %d)...", limit)
-    # Pre-filter top 80 to save tokens
-    candidates = articles[:80]
+    # Pre-filter: Increased to 500 to leverage Gemini 2.0 Flash context window
+    candidates = articles[:500]
 
     items_str = json.dumps([
         {"id": i, "source": a["source"], "text": a["full_text"]}
@@ -248,19 +285,29 @@ def analyze_with_gemini(articles: List[Dict[str, Any]], limit: int) -> List[Dict
     prompt = get_gemini_prompt(items_str, limit)
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt,
-        config={"response_mime_type": "application/json"},
-    )
-    selections = json.loads(response.text)
-    final_list = []
-    for sel in selections:
-        if sel["id"] < len(candidates):
-            original = candidates[sel["id"]]
-            original["reason"] = sel["analysis"]
-            final_list.append(original)
-    return final_list
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config={"response_mime_type": "application/json"},
+        )
+        # Use robust parser
+        selections = parse_json_response(response.text)
+        
+        final_list = []
+        for sel in selections:
+            if isinstance(sel, dict) and "id" in sel and sel["id"] < len(candidates):
+                original = candidates[sel["id"]]
+                original["reason"] = sel.get("analysis", "No analysis provided.")
+                final_list.append(original)
+        return final_list
+        
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error("Failed to parse Gemini response: %s", e)
+        return []
+    except Exception as e: # pylint: disable=broad-exception-caught
+        logger.error("Gemini API error: %s", e)
+        return []
 
 
 def send_email(platform_articles: List[Dict[str, Any]], blog_articles: List[Dict[str, Any]]) -> None:
