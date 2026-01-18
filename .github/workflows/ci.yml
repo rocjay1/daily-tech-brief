@@ -15,20 +15,27 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python 3.10
+    - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
-        python-version: "3.10"
+        python-version: "3.12"
+        cache: 'pip'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-        pip install mypy pytest types-requests types-setuptools
+        pip install mypy pytest types-requests types-setuptools black isort
+
+    - name: Format Check with Black
+      run: black --check src
+
+    - name: Import Sort Check with isort
+      run: isort --check src
 
     - name: Lint with pylint
       run: |
-        pylint src
+        pylint --rcfile=.pylintrc src
 
     - name: Type check with mypy
       run: |

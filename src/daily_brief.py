@@ -6,8 +6,6 @@ curates them using Google Gemini, and sends an email summary.
 
 import concurrent.futures
 import datetime
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 import hashlib
 import json
 import logging
@@ -15,13 +13,14 @@ import os
 import re
 import smtplib
 import sys
-from typing import Dict, List, Any, Optional, TypedDict, cast
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from typing import Any, Dict, List, Optional, TypedDict, cast
 
-import requests
 import feedparser  # type: ignore
+import requests
 from google import genai
 from google.cloud import firestore  # type: ignore
-
 
 # Configure logging
 logging.basicConfig(

@@ -3,3 +3,9 @@ google-genai>=1.59.0
 google-cloud-firestore>=2.23.0
 pylint>=3.1.0
 requests>=2.32.5
+black
+isort
+pytest
+mypy
+types-requests
+types-setuptools
