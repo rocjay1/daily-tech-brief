@@ -1,7 +1,7 @@
 Daily Tech Brief
 ================
 
-Automated, AI-curated daily tech news briefing sent email. It runs on GitHub Actions, uses Google Cloud Firestore for deduplication, and leverages Google Gemini 2.0 Flash to intelligently curate and summarize the most relevant articles.
+Automated, AI-curated daily tech briefing sent via email. Uses GitHub Actions, Firestore, and Gemini 2.0 Flash to find and summarize high-signal articles.
 
 Features
 --------
