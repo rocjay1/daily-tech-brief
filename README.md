@@ -25,7 +25,7 @@ A Python-based RSS aggregator that sends a daily email summary of Azure, Terrafo
 
 ### 1. Terraform (Infrastructure)
 
-Navigate to the `terraform/` directory.
+Navigate to the `infra/` directory.
 
 Create a `terraform.tfvars` file:
 
@@ -90,7 +90,7 @@ The workflow file (`.github/workflows/daily_scan.yml`) is pre-configured.
 
 ## Logic Flow
 
-1. **Fetch:** Python script pulls RSS feeds from Azure, Microsoft DevOps, Latent Space, LWN (Linux), etc.
+1. **Fetch:** Python script pulls RSS feeds from Azure, Latent Space, Julia Evans, etc.
 2. **Deduplicate:** Checks article URLs against a Firestore database. If it's been seen before, it's skipped.
 3. **Analyze:** Sends candidates to Gemini 2.0 Flash to pick the top 15 "High Signal" articles and explain *why* they matter. If the AI processing fails, the workflow stops.
 4. **Send:** Formats the chosen articles into an HTML email and sends it via SMTP.

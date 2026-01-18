@@ -32,7 +32,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_config(config_filename: str = "config.json") -> Dict[str, Any]:
+def load_config(config_filename: str = "config/config.json") -> Dict[str, Any]:
     """Loads configuration from a JSON file."""
     # Build absolute path relative to this script
     base_dir = os.path.dirname(os.path.abspath(__file__))
