@@ -6,6 +6,8 @@ curates them using Google Gemini, and sends an email summary.
 
 import concurrent.futures
 import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 import hashlib
 import json
 import logging
@@ -13,14 +15,12 @@ import os
 import re
 import smtplib
 import sys
-import requests
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from typing import Dict, List, Any, Optional, TypedDict
+from typing import Dict, List, Any, Optional, TypedDict, cast
 
-import feedparser
+import requests
+import feedparser  # type: ignore
 from google import genai
-from google.cloud import firestore
+from google.cloud import firestore  # type: ignore
 
 
 # Configure logging
@@ -46,20 +46,22 @@ def load_config(config_filename: str = "config.json") -> Dict[str, Any]:
         return {"feeds": {}}
 
 
-CONFIG = load_config()
-FEEDS = CONFIG.get("feeds", {})
-SMTP_SERVER = CONFIG.get("smtp_server", "smtp.gmail.com")
-SMTP_PORT = CONFIG.get("smtp_port", 587)
+CONFIG: Dict[str, Any] = load_config()
+FEEDS: Dict[str, Any] = CONFIG.get("feeds", {})
+SMTP_SERVER: str = cast(str, CONFIG.get("smtp_server", "smtp.gmail.com"))
+SMTP_PORT: int = cast(int, CONFIG.get("smtp_port", 587))
 
 # Env Vars
-EMAIL_SENDER = os.environ.get("EMAIL_USER")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASS")
-EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", EMAIL_SENDER)
-GEMINI_API_KEY = os.environ.get("GEMINI_KEY")
-GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
+EMAIL_SENDER: Optional[str] = os.environ.get("EMAIL_USER")
+EMAIL_PASSWORD: Optional[str] = os.environ.get("EMAIL_PASS")
+EMAIL_RECIPIENT: str = os.environ.get("EMAIL_RECIPIENT", EMAIL_SENDER or "")
+GEMINI_API_KEY: Optional[str] = os.environ.get("GEMINI_KEY")
+GCP_PROJECT_ID: Optional[str] = os.environ.get("GCP_PROJECT_ID")
 
 
 class Article(TypedDict):
+    """Type definition for an article."""
+
     source: str
     title: str
     link: str
@@ -78,8 +80,9 @@ def parse_json_response(text: str) -> Any:
         # Remove closing ```
         if cleaned.endswith("```"):
             cleaned = cleaned.rsplit("\n", 1)[0]
-    
+
     return json.loads(cleaned)
+
 
 def get_gemini_prompt(items_str: str, limit: int) -> str:
     """Returns the prompt for Gemini analysis."""
@@ -220,7 +223,9 @@ def fetch_feed(source: str, url: str) -> List[Dict[str, Any]]:
         # Add a user-agent to prevent 403s from some strict blogs
         # Use requests with timeout for robustness
         try:
-            resp = requests.get(url, timeout=10, headers={"User-Agent": "DailyTechBriefBot/1.0"})
+            resp = requests.get(
+                url, timeout=10, headers={"User-Agent": "DailyTechBriefBot/1.0"}
+            )
             resp.raise_for_status()
             feed_content = resp.content
         except requests.RequestException as req_err:
@@ -236,13 +241,16 @@ def fetch_feed(source: str, url: str) -> List[Dict[str, Any]]:
             text_content = f"{title} - {clean_summary[:300]}"
 
             items.append(
-                Article(
-                    source=source,
-                    title=title,
-                    link=link,
-                    summary=clean_summary[:250] + "...",
-                    full_text=text_content,
-                    reason=None
+                cast(
+                    Dict[str, Any],
+                    Article(
+                        source=source,
+                        title=title,
+                        link=link,
+                        summary=clean_summary[:250] + "...",
+                        full_text=text_content,
+                        reason=None,
+                    ),
                 )
             )
     except Exception as e:  # pylint: disable=broad-exception-caught
@@ -253,7 +261,9 @@ def fetch_feed(source: str, url: str) -> List[Dict[str, Any]]:
 def get_articles(feeds: Dict[str, str]) -> List[Dict[str, Any]]:
     """Fetches and parses RSS feeds in parallel."""
     raw_items = []
-    logger.info("--- Starting Scan for %s ---", datetime.datetime.now().strftime('%Y-%m-%d'))
+    logger.info(
+        "--- Starting Scan for %s ---", datetime.datetime.now().strftime("%Y-%m-%d")
+    )
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future_to_source = {
@@ -271,20 +281,24 @@ def get_articles(feeds: Dict[str, str]) -> List[Dict[str, Any]]:
     return raw_items
 
 
-def analyze_with_gemini(articles: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+def analyze_with_gemini(
+    articles: List[Dict[str, Any]], limit: int
+) -> List[Dict[str, Any]]:
     """Uses Google Gemini to select the best articles."""
     logger.info("API Key found. Asking Gemini to curate (limit %d)...", limit)
     # Pre-filter: Increased to 500 to leverage Gemini 2.0 Flash context window
     candidates = articles[:500]
 
-    items_str = json.dumps([
-        {"id": i, "source": a["source"], "text": a["full_text"]}
-        for i, a in enumerate(candidates)
-    ])
+    items_str = json.dumps(
+        [
+            {"id": i, "source": a["source"], "text": a["full_text"]}
+            for i, a in enumerate(candidates)
+        ]
+    )
 
     prompt = get_gemini_prompt(items_str, limit)
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    client = genai.Client(api_key=cast(str, GEMINI_API_KEY))
     try:
         response = client.models.generate_content(
             model="gemini-2.0-flash",
@@ -292,8 +306,9 @@ def analyze_with_gemini(articles: List[Dict[str, Any]], limit: int) -> List[Dict
             config={"response_mime_type": "application/json"},
         )
         # Use robust parser
-        selections = parse_json_response(response.text)
-        
+        response_text = response.text if response.text else ""
+        selections = parse_json_response(response_text)
+
         final_list = []
         for sel in selections:
             if isinstance(sel, dict) and "id" in sel and sel["id"] < len(candidates):
@@ -301,16 +316,18 @@ def analyze_with_gemini(articles: List[Dict[str, Any]], limit: int) -> List[Dict
                 original["reason"] = sel.get("analysis", "No analysis provided.")
                 final_list.append(original)
         return final_list
-        
+
     except (json.JSONDecodeError, ValueError) as e:
         logger.error("Failed to parse Gemini response: %s", e)
         return []
-    except Exception as e: # pylint: disable=broad-exception-caught
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Gemini API error: %s", e)
         return []
 
 
-def send_email(platform_articles: List[Dict[str, Any]], blog_articles: List[Dict[str, Any]]) -> None:
+def send_email(
+    platform_articles: List[Dict[str, Any]], blog_articles: List[Dict[str, Any]]
+) -> None:
     """Formats and sends the daily brief via email."""
     total_articles = len(platform_articles) + len(blog_articles)
     if total_articles == 0:
@@ -332,11 +349,14 @@ def send_email(platform_articles: List[Dict[str, Any]], blog_articles: List[Dict
     def render_section(title: str, items: List[Dict[str, Any]]) -> str:
         if not items:
             return ""
-        section_style = "border-bottom: 2px solid #4b2c92; padding-bottom: 5px; margin-top: 30px;"
+        section_style = (
+            "border-bottom: 2px solid #4b2c92; padding-bottom: 5px; margin-top: 30px;"
+        )
         section_html = f"<h3 style='{section_style}'>{title}</h3>"
         for item in items:
             description = (
-                f"<b>Why it matters:</b> {item.get('reason', '')}<br><br>{item['summary']}"
+                f"<b>Why it matters:</b> {item.get('reason', '')}"
+                f"<br><br>{item['summary']}"
             )
             section_html += f"""
             <div style="margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
@@ -357,7 +377,7 @@ def send_email(platform_articles: List[Dict[str, Any]], blog_articles: List[Dict
     html_content += "</div></div></body></html>"
 
     msg = MIMEMultipart()
-    msg["From"] = EMAIL_SENDER
+    msg["From"] = cast(str, EMAIL_SENDER)
     msg["To"] = EMAIL_RECIPIENT
     msg["Subject"] = f"Daily Brief: {total_articles} Updates"
     msg.attach(MIMEText(html_content, "html"))
@@ -365,7 +385,7 @@ def send_email(platform_articles: List[Dict[str, Any]], blog_articles: List[Dict
     try:
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
-        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+        server.login(cast(str, EMAIL_SENDER), cast(str, EMAIL_PASSWORD))
         server.send_message(msg)
         server.quit()
         logger.info("Email sent.")
@@ -375,8 +395,8 @@ def send_email(platform_articles: List[Dict[str, Any]], blog_articles: List[Dict
 
 def main():
     """Main execution entry point."""
-    if not EMAIL_SENDER:
-        logger.error("Error: EMAIL_USER not set.")
+    if not EMAIL_SENDER or not EMAIL_PASSWORD:
+        logger.error("Error: EMAIL_USER or EMAIL_PASS not set.")
         return
 
     if not GEMINI_API_KEY:
@@ -390,8 +410,8 @@ def main():
     blog_feeds = FEEDS.get("blogs", {})
 
     # Fetch articles
-    raw_platform = get_articles(platform_feeds)
-    raw_blogs = get_articles(blog_feeds)
+    raw_platform = get_articles(cast(Dict[str, str], platform_feeds))
+    raw_blogs = get_articles(cast(Dict[str, str], blog_feeds))
 
     # Deduplicate
     new_platform = state_manager.filter_new(raw_platform)

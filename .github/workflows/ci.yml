@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install mypy pytest types-requests types-setuptools
+
+    - name: Lint with pylint
+      run: |
+        pylint src
+
+    - name: Type check with mypy
+      run: |
+        mypy src
+
+    - name: Test ature with pytest
+      env:
+        EMAIL_USER: "test_user"
+        EMAIL_PASS: "test_pass"
+        GEMINI_KEY: "test_key"
+        GCP_PROJECT_ID: "test_project"
+      run: |
+        pytest tests

@@ -1,47 +1,54 @@
+"""Unit tests for daily_brief module."""
 
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 import sys
 import os
-import json
+
+# Removed unused json import
 
 # Ensure src is in path to import daily_brief
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 # Mock external dependencies before importing the module
-sys.modules['google'] = MagicMock()
-sys.modules['google.genai'] = MagicMock()
-sys.modules['google.cloud'] = MagicMock()
-sys.modules['google.cloud.firestore'] = MagicMock()
-sys.modules['feedparser'] = MagicMock()
+sys.modules["google"] = MagicMock()
+sys.modules["google.genai"] = MagicMock()
+sys.modules["google.cloud"] = MagicMock()
+sys.modules["google.cloud.firestore"] = MagicMock()
+sys.modules["feedparser"] = MagicMock()
 
 # Set env vars to avoid errors during import if they are accessed at module level
-os.environ['EMAIL_USER'] = 'test@example.com'
-os.environ['EMAIL_PASS'] = 'secret'
-os.environ['GEMINI_KEY'] = 'fake_key'
-os.environ['GCP_PROJECT_ID'] = 'fake_project'
+os.environ["EMAIL_USER"] = "test@example.com"
+os.environ["EMAIL_PASS"] = "secret"
+os.environ["GEMINI_KEY"] = "fake_key"
+os.environ["GCP_PROJECT_ID"] = "fake_project"
 
-import daily_brief
+import daily_brief  # pylint: disable=wrong-import-position  # type: ignore
+
 
 class TestDailyBrief(unittest.TestCase):
+    """Test cases for Daily Brief application."""
 
     def setUp(self):
         # Reset FEEDS before each test
         self.original_feeds = daily_brief.FEEDS
         daily_brief.FEEDS = {
             "platform_updates": {"Platform Feed": "http://p.com/rss"},
-            "blogs": {"Blog Feed": "http://b.com/rss"}
+            "blogs": {"Blog Feed": "http://b.com/rss"},
         }
 
     def tearDown(self):
         daily_brief.FEEDS = self.original_feeds
 
-    @patch('daily_brief.get_articles')
-    @patch('daily_brief.analyze_with_gemini')
-    @patch('daily_brief.send_email')
-    @patch('daily_brief.StateManager')
-    def test_main_workflow_split(self, mock_state_manager, mock_send_email, mock_analyze, mock_get_articles):
-        """Test that main fetches feeds separately, analyzes them with limits, and sends combined email."""
+    @patch("daily_brief.get_articles")
+    @patch("daily_brief.analyze_with_gemini")
+    @patch("daily_brief.send_email")
+    @patch("daily_brief.StateManager")
+    def test_main_workflow_split(
+        self, mock_state_manager, mock_send_email, mock_analyze, mock_get_articles
+    ):
+        """Test that main fetches feeds separately, analyzes them with limits,
+        and sends combined email."""
 
         # Setup mocks
         mock_db_instance = mock_state_manager.return_value
@@ -49,10 +56,17 @@ class TestDailyBrief(unittest.TestCase):
         # Mock get_articles to return different items based on input feeds
         def get_articles_side_effect(feeds):
             if "Platform Feed" in feeds:
-                return [{"link": f"p{i}", "source": "Platform Feed", "title": f"P{i}"} for i in range(20)]
+                return [
+                    {"link": f"p{i}", "source": "Platform Feed", "title": f"P{i}"}
+                    for i in range(20)
+                ]
             if "Blog Feed" in feeds:
-                return [{"link": f"b{i}", "source": "Blog Feed", "title": f"B{i}"} for i in range(20)]
+                return [
+                    {"link": f"b{i}", "source": "Blog Feed", "title": f"B{i}"}
+                    for i in range(20)
+                ]
             return []
+
         mock_get_articles.side_effect = get_articles_side_effect
 
         # Mock filter_new to return all articles as new
@@ -64,9 +78,10 @@ class TestDailyBrief(unittest.TestCase):
             result = []
             for item in articles[:limit]:
                 item_copy = item.copy()
-                item_copy['reason'] = 'Good article'
+                item_copy["reason"] = "Good article"
                 result.append(item_copy)
             return result
+
         mock_analyze.side_effect = analyze_side_effect
 
         # Run main
@@ -83,7 +98,7 @@ class TestDailyBrief(unittest.TestCase):
         # Verify limits passed to analyze
         # We don't know exact order, so check calls
         calls = mock_analyze.call_args_list
-        limits = [kwargs['limit'] for args, kwargs in calls]
+        limits = [kwargs["limit"] for args, kwargs in calls]
         self.assertEqual(limits, [15, 15])
 
         # 3. send_email called once with two lists
@@ -103,13 +118,25 @@ class TestDailyBrief(unittest.TestCase):
         """Test that email HTML contains section headers."""
 
         platform_items = [
-            {"source": "Azure", "title": "New VM", "link": "http://a.com", "summary": "sum", "reason": "imp"}
+            {
+                "source": "Azure",
+                "title": "New VM",
+                "link": "http://a.com",
+                "summary": "sum",
+                "reason": "imp",
+            }
         ]
         blog_items = [
-            {"source": "DevBlog", "title": "Coding", "link": "http://b.com", "summary": "sum", "reason": "fun"}
+            {
+                "source": "DevBlog",
+                "title": "Coding",
+                "link": "http://b.com",
+                "summary": "sum",
+                "reason": "fun",
+            }
         ]
 
-        with patch('smtplib.SMTP') as mock_smtp:
+        with patch("smtplib.SMTP") as mock_smtp:
             daily_brief.send_email(platform_items, blog_items)
 
             # Get the sent message content
@@ -119,7 +146,7 @@ class TestDailyBrief(unittest.TestCase):
             # Decode the payload. MIMEText might use base64 or quoted-printable.
             # get_payload(decode=True) returns bytes
             html_content_bytes = msg.get_payload(0).get_payload(decode=True)
-            html_content = html_content_bytes.decode('utf-8')
+            html_content = html_content_bytes.decode("utf-8")
 
             # Check for section headers
             self.assertIn("Platform Updates", html_content)
@@ -137,5 +164,6 @@ class TestDailyBrief(unittest.TestCase):
         prompt_20 = daily_brief.get_gemini_prompt("[]", 20)
         self.assertIn("Top 20 most relevant articles", prompt_20)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()
