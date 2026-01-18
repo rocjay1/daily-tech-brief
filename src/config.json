@@ -6,15 +6,11 @@
         },
         "blogs": {
             "Azure Blog": "https://azure.microsoft.com/en-us/blog/feed/",
-            "Azure Tools (Terraform)": "https://techcommunity.microsoft.com/gscwv57232/rss/board?board.id=AzureToolsBlog",
-            "Spacelift (IaC Deep Dives)": "https://spacelift.io/blog/feed",
-            "Firefly (Cloud Governance)": "https://www.firefly.ai/blog/rss.xml",
+            "Azure Tools (Terraform)": "https://techcommunity.microsoft.com/t5/s/gxcuf89792/rss/board?board.id=AzureToolsBlog",
             "Microsoft DevOps": "https://devblogs.microsoft.com/devops/feed/",
+            "Firefly (Cloud Governance)": "https://www.firefly.ai/blog/rss.xml",
             "GitHub Engineering": "https://github.blog/category/engineering/feed/",
             "Latent Space (AI Engineering)": "https://www.latent.space/feed",
-            "The Batch (DeepLearning.AI)": "https://www.deeplearning.ai/the-batch/feed/",
-            "TLDR AI": "https://tldr.tech/ai/rss",
-            "LWN (Linux Kernel)": "https://lwn.net/headlines/rss",
             "Julia Evans (Wizard Zines)": "https://jvns.ca/atom.xml"
         }
     },
