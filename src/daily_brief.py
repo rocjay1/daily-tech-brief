@@ -324,15 +324,38 @@ def analyze_with_gemini(
         return []
 
 
-def send_email(
-    platform_articles: List[Dict[str, Any]], blog_articles: List[Dict[str, Any]]
-) -> None:
-    """Formats and sends the daily brief via email."""
-    total_articles = len(platform_articles) + len(blog_articles)
-    if total_articles == 0:
-        logger.info("No articles to send.")
-        return
+def _render_section(title: str, items: List[Dict[str, Any]]) -> str:
+    """Renders a section of the email."""
+    if not items:
+        return ""
+    section_style = (
+        "border-bottom: 2px solid #4b2c92; padding-bottom: 5px; margin-top: 30px;"
+    )
+    section_html = f"<h3 style='{section_style}'>{title}</h3>"
+    for item in items:
+        description = (
+            f"<b>Why it matters:</b> {item.get('reason', '')}"
+            f"<br><br>{item['summary']}"
+        )
+        section_html += f"""
+        <div style="margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+            <span style="font-size: 11px; font-weight: bold; color: #666;
+                         text-transform: uppercase;">{item['source']}</span>
+            <h3 style="margin: 5px 0; font-size: 18px;">
+                <a href="{item['link']}"
+                   style="text-decoration: none; color: #0078D4;">{item['title']}</a>
+            </h3>
+            <p style="font-size: 14px; color: #444; margin-top: 5px;">{description}</p>
+        </div>
+        """
+    return section_html
 
+
+def generate_email_html(
+    platform_articles: List[Dict[str, Any]], blog_articles: List[Dict[str, Any]]
+) -> str:
+    """Generates the HTML content for the email."""
+    total_articles = len(platform_articles) + len(blog_articles)
     html_content = f"""
     <html>
     <body style="font-family: 'Segoe UI', sans-serif; color: #333; line-height: 1.6;">
@@ -345,35 +368,23 @@ def send_email(
             <div style="padding: 20px;">
     """
 
-    def render_section(title: str, items: List[Dict[str, Any]]) -> str:
-        if not items:
-            return ""
-        section_style = (
-            "border-bottom: 2px solid #4b2c92; padding-bottom: 5px; margin-top: 30px;"
-        )
-        section_html = f"<h3 style='{section_style}'>{title}</h3>"
-        for item in items:
-            description = (
-                f"<b>Why it matters:</b> {item.get('reason', '')}"
-                f"<br><br>{item['summary']}"
-            )
-            section_html += f"""
-            <div style="margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
-                <span style="font-size: 11px; font-weight: bold; color: #666;
-                             text-transform: uppercase;">{item['source']}</span>
-                <h3 style="margin: 5px 0; font-size: 18px;">
-                    <a href="{item['link']}"
-                       style="text-decoration: none; color: #0078D4;">{item['title']}</a>
-                </h3>
-                <p style="font-size: 14px; color: #444; margin-top: 5px;">{description}</p>
-            </div>
-            """
-        return section_html
-
-    html_content += render_section("Platform Updates", platform_articles)
-    html_content += render_section("Blog Posts", blog_articles)
+    html_content += _render_section("Platform Updates", platform_articles)
+    html_content += _render_section("Blog Posts", blog_articles)
 
     html_content += "</div></div></body></html>"
+    return html_content
+
+
+def send_email(
+    platform_articles: List[Dict[str, Any]], blog_articles: List[Dict[str, Any]]
+) -> None:
+    """Formats and sends the daily brief via email."""
+    total_articles = len(platform_articles) + len(blog_articles)
+    if total_articles == 0:
+        logger.info("No articles to send.")
+        return
+
+    html_content = generate_email_html(platform_articles, blog_articles)
 
     msg = MIMEMultipart()
     msg["From"] = cast(str, EMAIL_SENDER)
