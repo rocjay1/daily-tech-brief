@@ -9,6 +9,7 @@ on:
 jobs:
   run-daily-brief:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     
     permissions:
       contents: read
@@ -36,7 +37,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: 'pip' # Enable caching for pip
 
       - name: Install Dependencies
