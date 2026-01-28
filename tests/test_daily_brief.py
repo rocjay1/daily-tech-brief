@@ -5,8 +5,6 @@ from unittest.mock import MagicMock, patch
 import sys
 import os
 
-# Ensure src is in path to import daily_brief
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 # Mock external dependencies before importing the module
 sys.modules["google"] = MagicMock()
@@ -21,8 +19,8 @@ os.environ["EMAIL_PASS"] = "secret"
 os.environ["GEMINI_KEY"] = "fake_key"
 os.environ["GCP_PROJECT_ID"] = "fake_project"
 
-import daily_brief  # pylint: disable=wrong-import-position  # type: ignore
-from services.email_service import EmailService  # type: ignore
+from src import daily_brief  # pylint: disable=wrong-import-position  # type: ignore
+from src.services.email_service import EmailService  # type: ignore
 
 
 class TestDailyBrief(unittest.TestCase):
@@ -39,10 +37,10 @@ class TestDailyBrief(unittest.TestCase):
     def tearDown(self):
         daily_brief.FEEDS = self.original_feeds
 
-    @patch("daily_brief.get_articles")
-    @patch("daily_brief.LLMService")
-    @patch("daily_brief.EmailService")
-    @patch("daily_brief.StateManager")
+    @patch("src.daily_brief.get_articles")
+    @patch("src.daily_brief.LLMService")
+    @patch("src.daily_brief.EmailService")
+    @patch("src.daily_brief.StateManager")
     def test_main_workflow_split(
         self,
         mock_state_manager,

@@ -5,11 +5,9 @@ from unittest.mock import MagicMock, patch
 import sys
 import os
 
-# Ensure src is in path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-from parsers.github import GitHubChangelogParser
-from parsers.rss import RSSParser
+from src.parsers.github import GitHubChangelogParser
+from src.parsers.rss import RSSParser
 
 
 class TestGitHubParser(unittest.TestCase):
