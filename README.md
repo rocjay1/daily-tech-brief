@@ -7,6 +7,7 @@ Features
 --------
 
 - **Smart Curation**: Uses Google Gemini 2.0 Flash to analyze headlines and select high-signal articles.
+- **Multi-Source Parsing**: Supports standard RSS feeds and GitHub Markdown changelogs (e.g., Claude Code).
 - **Deduplication**: Tracks seen articles via Google Cloud Firestore to prevent repeats.
 - **Keyless Security**: Authenticates to Google Cloud via Workload Identity Federation.
 - **Automated Delivery**: Runs automatically Mon-Fri at 7:00 AM CST via GitHub Actions.
