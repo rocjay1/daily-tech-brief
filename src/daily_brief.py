@@ -10,7 +10,8 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, List, cast
+from pathlib import Path
+from typing import Any, Dict, List, cast, Optional
 
 # Services
 from src.services.db import StateManager
@@ -34,8 +35,8 @@ logger = logging.getLogger(__name__)
 
 def load_config(config_filename: str = "../config/config.json") -> Dict[str, Any]:
     """Loads configuration from a JSON file."""
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(base_dir, config_filename)
+    base_dir = Path(__file__).resolve().parent
+    config_path = base_dir / config_filename
 
     try:
         with open(config_path, "r", encoding="utf-8") as f:
@@ -45,112 +46,143 @@ def load_config(config_filename: str = "../config/config.json") -> Dict[str, Any
         return {"feeds": {}}
 
 
+# Global config to maintain backward compatibility for tests that might rely on it
 CONFIG: Dict[str, Any] = load_config()
 FEEDS: Dict[str, Any] = CONFIG.get("feeds", {})
 
-# Env Vars
-EMAIL_SENDER: str = os.environ.get("EMAIL_USER", "")
-EMAIL_PASSWORD: str = os.environ.get("EMAIL_PASS", "")
-EMAIL_RECIPIENT: str = os.environ.get("EMAIL_RECIPIENT", EMAIL_SENDER or "")
-GEMINI_API_KEY: str = os.environ.get("GEMINI_KEY", "")
-GCP_PROJECT_ID: str = os.environ.get("GCP_PROJECT_ID", "")
 
+class DailyBriefApp:
+    """
+    Main application class for generating the Daily Tech Brief.
+    """
+    # pylint: disable=too-many-instance-attributes
 
-def get_parser(url: str) -> FeedParser:
-    """Factory to return the appropriate parser."""
-    if "github.com" in url and ("blob" in url or "raw" in url):
-        return GitHubChangelogParser()
-    return RSSParser()
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        # Allow overriding feeds from global if config doesn't have them (for tests)
+        self.feeds = config.get("feeds", {}) or FEEDS
 
+        self.email_sender = os.environ.get("EMAIL_USER", "")
+        self.email_password = os.environ.get("EMAIL_PASS", "")
+        self.email_recipient = os.environ.get("EMAIL_RECIPIENT", self.email_sender or "")
+        self.gemini_api_key = os.environ.get("GEMINI_KEY", "")
+        self.gcp_project_id = os.environ.get("GCP_PROJECT_ID", "")
 
-def fetch_feed_safe(source: str, url: str) -> List[Article]:
-    """Wrapper to fetch feed with appropriate parser."""
-    parser = get_parser(url)
-    return parser.fetch(source, url)
+        self.state_manager: Optional[StateManager] = None
+        self.email_service: Optional[EmailService] = None
+        self.llm_service: Optional[LLMService] = None
 
+    def _init_services(self) -> bool:
+        """Initialize external services."""
+        if not self.email_sender or not self.email_password:
+            logger.error("Error: EMAIL_USER or EMAIL_PASS not set.")
+            return False
 
-def get_articles(feeds: Dict[str, str]) -> List[Article]:
-    """Fetches and parses feeds in parallel."""
-    raw_items: List[Article] = []
-    logger.info(
-        "--- Starting Scan for %s ---", datetime.datetime.now().strftime("%Y-%m-%d")
-    )
+        if not self.gemini_api_key:
+            logger.error("Error: GEMINI_KEY not set. Workflow failed.")
+            return False
 
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future_to_source = {
-            executor.submit(fetch_feed_safe, source, url): source
-            for source, url in feeds.items()
-        }
-        for future in concurrent.futures.as_completed(future_to_source):
-            try:
-                items = future.result()
-                raw_items.extend(items)
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                source = future_to_source[future]
-                logger.error("%s generated an exception: %s", source, exc)
+        self.state_manager = StateManager(self.gcp_project_id)
+        self.email_service = EmailService(
+            smtp_server=str(self.config.get("smtp_server", "smtp.gmail.com")),
+            smtp_port=int(self.config.get("smtp_port", 587)),
+            sender_email=self.email_sender,
+            sender_password=self.email_password,
+        )
+        self.llm_service = LLMService(api_key=self.gemini_api_key)
+        return True
 
-    return raw_items
+    def _get_parser(self, url: str) -> FeedParser:
+        """Factory to return the appropriate parser."""
+        if "github.com" in url and ("blob" in url or "raw" in url):
+            return GitHubChangelogParser()
+        return RSSParser()
+
+    def _fetch_feed_safe(self, source: str, url: str) -> List[Article]:
+        """Wrapper to fetch feed with appropriate parser."""
+        parser = self._get_parser(url)
+        return parser.fetch(source, url)
+
+    def _process_feeds(self, feeds: Dict[str, str]) -> List[Article]:
+        """Fetches and parses feeds in parallel."""
+        raw_items: List[Article] = []
+        logger.info(
+            "--- Starting Scan for %s ---", datetime.datetime.now().strftime("%Y-%m-%d")
+        )
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future_to_source = {
+                executor.submit(self._fetch_feed_safe, source, url): source
+                for source, url in feeds.items()
+            }
+            for future in concurrent.futures.as_completed(future_to_source):
+                try:
+                    items = future.result()
+                    raw_items.extend(items)
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    source = future_to_source[future]
+                    logger.error("%s generated an exception: %s", source, exc)
+
+        return raw_items
+
+    def _deduplicate(self, articles: List[Article]) -> List[Article]:
+        """Deduplicates articles using StateManager."""
+        if not self.state_manager:
+            return articles
+
+        return cast(
+            List[Article],
+            self.state_manager.filter_new(cast(List[Dict[str, Any]], articles)),
+        )
+
+    def _curate(self, articles: List[Article], limit: int = 15) -> List[Article]:
+        """Curates articles using LLM."""
+        if not self.llm_service or not articles:
+            return []
+        return self.llm_service.analyze_with_gemini(articles, limit=limit)
+
+    def run(self):
+        """Main execution flow."""
+        if not self._init_services():
+            sys.exit(1)
+
+        # Load feeds
+        platform_feeds = self.feeds.get("platform_updates", {})
+        blog_feeds = self.feeds.get("blogs", {})
+
+        # Fetch articles
+        raw_platform = self._process_feeds(cast(Dict[str, str], platform_feeds))
+        raw_blogs = self._process_feeds(cast(Dict[str, str], blog_feeds))
+
+        # Deduplicate
+        new_platform = self._deduplicate(raw_platform)
+        new_blogs = self._deduplicate(raw_blogs)
+
+        if not new_platform and not new_blogs:
+            logger.info("No new articles today!")
+            return
+
+        # Analyze / Curate
+        final_platform = self._curate(new_platform, limit=15)
+        final_blogs = self._curate(new_blogs, limit=15)
+
+        if final_platform or final_blogs:
+            if self.email_service:
+                self.email_service.send_email(
+                    self.email_recipient, final_platform, final_blogs
+                )
+
+            # Save processed state
+            if self.state_manager:
+                self.state_manager.save_processed(
+                    cast(List[Dict[str, Any]], new_platform + new_blogs)
+                )
 
 
 def main():
     """Main execution entry point."""
-    if not EMAIL_SENDER or not EMAIL_PASSWORD:
-        logger.error("Error: EMAIL_USER or EMAIL_PASS not set.")
-        return
-
-    if not GEMINI_API_KEY:
-        logger.error("Error: GEMINI_KEY not set. Workflow failed.")
-        sys.exit(1)
-
-    # Initialize Services
-    state_manager = StateManager(GCP_PROJECT_ID)
-    email_service = EmailService(
-        smtp_server=str(CONFIG.get("smtp_server", "smtp.gmail.com")),
-        smtp_port=int(CONFIG.get("smtp_port", 587)),
-        sender_email=EMAIL_SENDER,
-        sender_password=EMAIL_PASSWORD,
-    )
-    llm_service = LLMService(api_key=GEMINI_API_KEY)
-
-    # Load feeds
-    platform_feeds = FEEDS.get("platform_updates", {})
-    blog_feeds = FEEDS.get("blogs", {})
-
-    # Fetch articles
-    raw_platform = get_articles(cast(Dict[str, str], platform_feeds))
-    raw_blogs = get_articles(cast(Dict[str, str], blog_feeds))
-
-    # Deduplicate
-    # Mypy might complain about type mismatch if StateManager isn't fully typed with Article
-    # We'll cast for now or update StateManager signature
-    new_platform = cast(
-        List[Article],
-        state_manager.filter_new(cast(List[Dict[str, Any]], raw_platform)),
-    )
-    new_blogs = cast(
-        List[Article], state_manager.filter_new(cast(List[Dict[str, Any]], raw_blogs))
-    )
-
-    if not new_platform and not new_blogs:
-        logger.info("No new articles today!")
-        return
-
-    # Analyze / Curate
-    final_platform = []
-    if new_platform:
-        final_platform = llm_service.analyze_with_gemini(new_platform, limit=15)
-
-    final_blogs = []
-    if new_blogs:
-        final_blogs = llm_service.analyze_with_gemini(new_blogs, limit=15)
-
-    if final_platform or final_blogs:
-        email_service.send_email(EMAIL_RECIPIENT, final_platform, final_blogs)
-
-        # Save processed state
-        state_manager.save_processed(
-            cast(List[Dict[str, Any]], new_platform + new_blogs)
-        )
+    app = DailyBriefApp(CONFIG)
+    app.run()
 
 
 if __name__ == "__main__":
