@@ -20,6 +20,21 @@ logger = logging.getLogger(__name__)
 class EmailService:
     """Service for handling email generation and sending."""
 
+    _EMAIL_STYLES = {
+        "body": "font-family: 'Segoe UI', sans-serif; color: #333; line-height: 1.6;",
+        "container": "max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px;",
+        "header": "background-color: #4b2c92; padding: 20px; text-align: center; color: white;",
+        "header_h2": "margin:0;",
+        "header_p": "margin:5px 0 0; opacity: 0.9;",
+        "section": "padding: 20px;",
+        "section_h3": "border-bottom: 2px solid #4b2c92; padding-bottom: 5px; margin-top: 30px;",
+        "article": "margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 15px;",
+        "source": "font-size: 11px; font-weight: bold; color: #666; text-transform: uppercase;",
+        "article_h3": "margin: 5px 0; font-size: 18px;",
+        "link": "text-decoration: none; color: #0078D4;",
+        "desc": "font-size: 14px; color: #444; margin-top: 5px;",
+    }
+
     def __init__(
         self, smtp_server: str, smtp_port: int, sender_email: str, sender_password: str
     ):
@@ -32,24 +47,21 @@ class EmailService:
         """Renders a section of the email."""
         if not items:
             return ""
-        section_style = (
-            "border-bottom: 2px solid #4b2c92; padding-bottom: 5px; margin-top: 30px;"
-        )
-        section_html = f"<h3 style='{section_style}'>{title}</h3>"
+
+        section_html = f"<h3 style='{self._EMAIL_STYLES['section_h3']}'>{title}</h3>"
         for item in items:
             description = (
                 f"<b>Why it matters:</b> {item.get('reason', '')}"
                 f"<br><br>{item['summary']}"
             )
             section_html += f"""
-            <div style="margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
-                <span style="font-size: 11px; font-weight: bold; color: #666;
-                             text-transform: uppercase;">{item['source']}</span>
-                <h3 style="margin: 5px 0; font-size: 18px;">
+            <div style="{self._EMAIL_STYLES['article']}">
+                <span style="{self._EMAIL_STYLES['source']}">{item['source']}</span>
+                <h3 style="{self._EMAIL_STYLES['article_h3']}">
                     <a href="{item['link']}"
-                       style="text-decoration: none; color: #0078D4;">{item['title']}</a>
+                       style="{self._EMAIL_STYLES['link']}">{item['title']}</a>
                 </h3>
-                <p style="font-size: 14px; color: #444; margin-top: 5px;">{description}</p>
+                <p style="{self._EMAIL_STYLES['desc']}">{description}</p>
             </div>
             """
         return section_html
@@ -61,14 +73,13 @@ class EmailService:
         total_articles = len(platform_articles) + len(blog_articles)
         html_content = f"""
         <html>
-        <body style="font-family: 'Segoe UI', sans-serif; color: #333; line-height: 1.6;">
-            <div style="max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px;">
-                <div style="background-color: #4b2c92;
-                            padding: 20px; text-align: center; color: white;">
-                    <h2 style="margin:0;">🚀 Daily Brief</h2>
-                    <p style="margin:5px 0 0; opacity: 0.9;">Top {total_articles} Stories</p>
+        <body style="{self._EMAIL_STYLES['body']}">
+            <div style="{self._EMAIL_STYLES['container']}">
+                <div style="{self._EMAIL_STYLES['header']}">
+                    <h2 style="{self._EMAIL_STYLES['header_h2']}">🚀 Daily Brief</h2>
+                    <p style="{self._EMAIL_STYLES['header_p']}">Top {total_articles} Stories</p>
                 </div>
-                <div style="padding: 20px;">
+                <div style="{self._EMAIL_STYLES['section']}">
         """
 
         html_content += self._render_section("Platform Updates", platform_articles)

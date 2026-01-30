@@ -32,22 +32,7 @@ class LLMService:
             logger.error("Failed to initialize Gemini client: %s", e)
             self.client = None
 
-    def _parse_json_response(self, text: str) -> Any:
-        """Safely parses JSON from LLM output, handling markdown blocks."""
-        cleaned = text.strip()
-        # Strip Markdown code blocks usually returned by Gemini
-        if cleaned.startswith("```"):
-            # Remove opening ```json or ```
-            cleaned = cleaned.split("\n", 1)[1]
-            # Remove closing ```
-            if cleaned.endswith("```"):
-                cleaned = cleaned.rsplit("\n", 1)[0]
-
-        return json.loads(cleaned)
-
-    def _get_gemini_prompt(self, items_str: str, limit: int) -> str:
-        """Returns the prompt for Gemini analysis."""
-        return f"""
+    _SYSTEM_PROMPT = """
         You are a Principal Cloud Architect and AI Engineer acting as an intelligent assistant for a Corporate IT System Engineer.
 
         User Persona:
@@ -79,6 +64,23 @@ class LLMService:
         - DO NOT use Markdown formatting (no ```json blocks).
         - Object schema: {{"id": int, "analysis": "1 sentence architectural justification"}}
         """
+
+    def _parse_json_response(self, text: str) -> Any:
+        """Safely parses JSON from LLM output, handling markdown blocks."""
+        cleaned = text.strip()
+        # Strip Markdown code blocks usually returned by Gemini
+        if cleaned.startswith("```"):
+            # Remove opening ```json or ```
+            cleaned = cleaned.split("\n", 1)[1]
+            # Remove closing ```
+            if cleaned.endswith("```"):
+                cleaned = cleaned.rsplit("\n", 1)[0]
+
+        return json.loads(cleaned)
+
+    def _get_gemini_prompt(self, items_str: str, limit: int) -> str:
+        """Returns the prompt for Gemini analysis."""
+        return self._SYSTEM_PROMPT.format(limit=limit, items_str=items_str)
 
     def analyze_with_gemini(self, articles: List[Article], limit: int) -> List[Article]:
         """Uses Google Gemini to select the best articles."""

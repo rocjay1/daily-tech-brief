@@ -27,17 +27,18 @@ class TestDailyBrief(unittest.TestCase):
     """Test cases for Daily Brief application."""
 
     def setUp(self):
-        # Reset FEEDS before each test
-        self.original_feeds = daily_brief.FEEDS
-        daily_brief.FEEDS = {
+        pass
+
+    def tearDown(self):
+        pass
+
+    @patch.dict(daily_brief.CONFIG, {
+        "feeds": {
             "platform_updates": {"Platform Feed": "http://p.com/rss"},
             "blogs": {"Blog Feed": "http://b.com/rss"},
         }
-
-    def tearDown(self):
-        daily_brief.FEEDS = self.original_feeds
-
-    @patch("src.daily_brief.get_articles")
+    })
+    @patch("src.daily_brief.DailyBriefApp._process_feeds")
     @patch("src.daily_brief.LLMService")
     @patch("src.daily_brief.EmailService")
     @patch("src.daily_brief.StateManager")
@@ -46,7 +47,7 @@ class TestDailyBrief(unittest.TestCase):
         mock_state_manager,
         mock_email_service,
         mock_llm_service,
-        mock_get_articles,
+        mock_process_feeds,
     ):
         """Test that main fetches feeds separately, analyzes them with limits,
         and sends combined email."""
@@ -56,8 +57,8 @@ class TestDailyBrief(unittest.TestCase):
         mock_email_instance = mock_email_service.return_value
         mock_llm_instance = mock_llm_service.return_value
 
-        # Mock get_articles to return different items based on input feeds
-        def get_articles_side_effect(feeds):
+        # Mock _process_feeds to return different items based on input feeds
+        def process_feeds_side_effect(feeds):
             if "Platform Feed" in feeds:
                 return [
                     {
@@ -82,7 +83,7 @@ class TestDailyBrief(unittest.TestCase):
                 ]
             return []
 
-        mock_get_articles.side_effect = get_articles_side_effect
+        mock_process_feeds.side_effect = process_feeds_side_effect
 
         # Mock filter_new to return all articles as new
         mock_db_instance.filter_new.side_effect = lambda articles: articles
@@ -104,8 +105,8 @@ class TestDailyBrief(unittest.TestCase):
 
         # Verifications
 
-        # 1. get_articles called twice (once for platform, once for blogs)
-        self.assertEqual(mock_get_articles.call_count, 2)
+        # 1. _process_feeds called twice (once for platform, once for blogs)
+        self.assertEqual(mock_process_feeds.call_count, 2)
 
         # 2. analyze_with_gemini called twice
         self.assertEqual(mock_llm_instance.analyze_with_gemini.call_count, 2)
