@@ -55,6 +55,7 @@ class DailyBriefApp:
     """
     Main application class for generating the Daily Tech Brief.
     """
+
     # pylint: disable=too-many-instance-attributes
 
     def __init__(self, config: Dict[str, Any]):
@@ -64,7 +65,9 @@ class DailyBriefApp:
 
         self.email_sender = os.environ.get("EMAIL_USER", "")
         self.email_password = os.environ.get("EMAIL_PASS", "")
-        self.email_recipient = os.environ.get("EMAIL_RECIPIENT", self.email_sender or "")
+        self.email_recipient = os.environ.get(
+            "EMAIL_RECIPIENT", self.email_sender or ""
+        )
         self.gemini_api_key = os.environ.get("GEMINI_KEY", "")
         self.gcp_project_id = os.environ.get("GCP_PROJECT_ID", "")
 
